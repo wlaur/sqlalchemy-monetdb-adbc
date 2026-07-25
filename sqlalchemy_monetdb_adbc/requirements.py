@@ -160,7 +160,10 @@ class Requirements(SuiteRequirements):
 
     @property
     def regexp_match(self) -> Any:
-        return exclusions.open()
+        # MonetDB has no regular-expression match operator. Its "~" is
+        # mbr_contains, a geometry operator, so emitting it would be wrong
+        # rather than merely unsupported.
+        return exclusions.closed()
 
     @property
     def regexp_replace(self) -> Any:

@@ -98,7 +98,7 @@ from sqlalchemy_monetdb_adbc import fetch_arrow_table, fetch_record_batches, ing
 statement = select(trades.c.id, trades.c.symbol).where(trades.c.symbol == "AAPL")
 
 with Session(engine) as session:
-    table = fetch_arrow_table(session.connection(), statement)   # pyarrow.Table
+    table = fetch_arrow_table(session.connection(), statement)  # pyarrow.Table
     frame = polars.from_arrow(table)
 
     # streaming, for results that should not be materialized at once
@@ -259,7 +259,7 @@ from sqlalchemy_monetdb_adbc import fetch_arrow_table, fetch_record_batches, ing
 statement = select(trades.c.id, trades.c.symbol).where(trades.c.symbol == "AAPL")
 
 with Session(engine) as session:
-    table = fetch_arrow_table(session.connection(), statement)   # pyarrow.Table
+    table = fetch_arrow_table(session.connection(), statement)  # pyarrow.Table
     frame = polars.from_arrow(table)
 
     # streaming, for results that should not be materialized at once

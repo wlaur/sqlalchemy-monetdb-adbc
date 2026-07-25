@@ -320,17 +320,6 @@ class MonetDBCompiler(compiler.SQLCompiler):
             table._compiler_dispatch(self, asfrom=True, fromhints=from_hints, **kw) for table in extra_froms
         )
 
-    def _regexp(self, operator: str, binary: Any, **kw: Any) -> str:
-        flags = binary.modifiers["flags"]
-        left = self.process(binary.left, **kw)
-        right = self.process(binary.right, **kw)
-        if flags is None:
-            return f"{left} {operator} {right}"
-        if flags == "i":
-            return f"{left} {operator}* {right}"
-        rendered_flags = self.render_literal_value(flags, sqltypes.STRINGTYPE)
-        return f"{left} {operator} CONCAT('(?', {rendered_flags}, ')', {right})"
-
     def _json_extract(self, binary: Any, _cast_applied: bool = False, **kw: Any) -> str:
         if not _cast_applied and binary.type._type_affinity is not sqltypes.JSON:
             kw["_cast_applied"] = True
@@ -355,12 +344,6 @@ class MonetDBCompiler(compiler.SQLCompiler):
 
     def visit_json_path_getitem_op_binary(self, binary: Any, operator: Any, **kw: Any) -> str:
         return self._json_extract(binary, **kw)
-
-    def visit_regexp_match_op_binary(self, binary: Any, operator: Any, **kw: Any) -> str:
-        return self._regexp("~", binary, **kw)
-
-    def visit_not_regexp_match_op_binary(self, binary: Any, operator: Any, **kw: Any) -> str:
-        return self._regexp("!~", binary, **kw)
 
     def visit_regexp_replace_op_binary(self, binary: Any, operator: Any, **kw: Any) -> str:
         flags = binary.modifiers["flags"]
