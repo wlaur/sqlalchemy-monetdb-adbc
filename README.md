@@ -9,9 +9,33 @@ or `sqlalchemy-monetdb`.
 
 ## Status
 
-The repository currently contains the installable package and connection bootstrap.
-Compiler, reflection, transaction, and live-server coverage are under development; it
-is not ready for a PyPI release yet.
+The dialect covers SQL compilation, types, reflection, transactions, and the ORM,
+and is validated against a live MonetDB server. It is not released to PyPI yet.
+
+### Dialect compliance suite
+
+SQLAlchemy's own dialect suite runs from `suite/` (see Development). 1052 of its
+tests pass; the known failures are tracked and mostly cluster in reflection
+edge cases, `RETURNING` variants, CTEs, and numeric precision.
+
+Two behaviors are limited by `adbc-driver-monetdb` rather than by MonetDB, and
+are marked `DRIVER-WORKAROUND` in the source:
+
+- `CursorResult.rowcount` is not reliable for single-statement DML, so
+  `supports_sane_rowcount` is off.
+- `LargeBinary` binds through a dialect-specific processor, because the DB-API
+  module does not export the PEP 249 `Binary` constructor.
+
+### MonetDB behaviors worth knowing
+
+- A stock login lands in the `sys` schema, where system views already occupy
+  ordinary table names such as `users` and `columns`. Create and use a schema of
+  your own.
+- Self-referential foreign keys are added by `ALTER TABLE` after the table
+  exists, because MonetDB cannot declare them inline.
+- Indexes carry no ordering, so `ASC`/`DESC` on an index expression is dropped.
+- A `UNIQUE` constraint is backed by an index of the same name, so it is
+  reflected both by `get_unique_constraints()` and by `get_indexes()`.
 
 ## Development installation
 
@@ -61,6 +85,19 @@ uv run pyright
 uv run pytest
 uv build
 ```
+
+Integration tests and the dialect compliance suite need a server. `compose.yaml`
+pins the same native ARM64 MonetDB image the driver is developed against:
+
+```console
+docker compose up -d
+MONETDB_TEST_URI=monetdb://monetdb:monetdb@localhost:50001/test uv run pytest tests
+uv run pytest suite -o addopts=""
+docker compose down -v
+```
+
+`uv run pytest` alone skips every test that needs a server, so the unit gate
+runs without one.
 
 ## License
 
