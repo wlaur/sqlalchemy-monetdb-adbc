@@ -100,6 +100,17 @@ engine = create_engine("monetdb://...", json_deserializer=orjson.loads)
 MonetDB validates and normalizes JSON on input, so a round-tripped document
 keeps its values but not its original whitespace or key order.
 
+Path indexing works as on other backends, including nested keys, array indexes
+and the `as_string()`/`as_integer()` accessors. A path that matches nothing
+returns `None`:
+
+```python
+select(t.c.doc["title"])          # 'hello'
+select(t.c.doc[("sub", "k")])     # 'v'
+select(t.c.doc[("arr", 1)])       # 20
+select(t.c.doc["missing"])        # None
+```
+
 Whatever Python object you store is serialized, and you get that same object
 back. Note that a `str` is itself a valid JSON value, so passing pre-serialized
 text to a `JSON` column stores a JSON *string*, not an object:
@@ -215,6 +226,17 @@ engine = create_engine("monetdb://...", json_deserializer=orjson.loads)
 
 MonetDB validates and normalizes JSON on input, so a round-tripped document
 keeps its values but not its original whitespace or key order.
+
+Path indexing works as on other backends, including nested keys, array indexes
+and the `as_string()`/`as_integer()` accessors. A path that matches nothing
+returns `None`:
+
+```python
+select(t.c.doc["title"])          # 'hello'
+select(t.c.doc[("sub", "k")])     # 'v'
+select(t.c.doc[("arr", 1)])       # 20
+select(t.c.doc["missing"])        # None
+```
 
 Whatever Python object you store is serialized, and you get that same object
 back. Note that a `str` is itself a valid JSON value, so passing pre-serialized

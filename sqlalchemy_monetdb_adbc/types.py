@@ -14,16 +14,15 @@ from sqlalchemy.sql.type_api import (
 
 
 def _json_path(value: Any) -> str:
-    """Render a SQLAlchemy JSON index or path as a MonetDB JSONPath string."""
-    if isinstance(value, str):
-        return f'$."{value}"'
-    if isinstance(value, int):
-        return f"$[{value}]"
-    if isinstance(value, Sequence):
-        elements = cast(Sequence[Any], value)
-        parts = "".join(f"[{element}]" if isinstance(element, int) else f'."{element}"' for element in elements)
-        return f"${parts}"
-    return "$"
+    """Render a SQLAlchemy JSON index or path as a MonetDB JSONPath string.
+
+    MonetDB's JSONPath takes bare keys: quoting one as ``$."key"`` silently
+    matches nothing rather than erroring. An array subscript is a separate step,
+    so it needs its own separator: ``$.arr.[0]``, not ``$.arr[0]``, which also
+    matches nothing.
+    """
+    elements = cast(Sequence[Any], value) if isinstance(value, (list, tuple)) else (value,)
+    return "$" + "".join(f".[{element}]" if isinstance(element, int) else f".{element}" for element in elements)
 
 
 class _MonetDBJSONPathBase:

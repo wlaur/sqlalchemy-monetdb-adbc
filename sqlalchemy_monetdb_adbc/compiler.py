@@ -337,8 +337,12 @@ class MonetDBCompiler(compiler.SQLCompiler):
             return self.process(cast_expression(binary, binary.type), **kw)
 
         left = self.process(binary.left, **kw)
-        right = self.process(binary.right, **kw)
-        filtered = f"JSON.FILTER({left}, {right})"
+        # MonetDB infers no type for a bare parameter here and tries to coerce
+        # it to HUGEINT, so the path is cast explicitly.
+        right = f"CAST({self.process(binary.right, **kw)} AS STRING)"
+        # JSON.FILTER yields '[]' when the path matches nothing; SQLAlchemy
+        # expects NULL there, as on other backends.
+        filtered = f"NULLIF(JSON.FILTER({left}, {right}), '[]')"
 
         if binary.type._type_affinity is sqltypes.JSON:
             return filtered

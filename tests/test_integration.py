@@ -476,3 +476,42 @@ def test_pydantic_json_distinguishes_an_empty_model_from_null(engine: Engine) ->
 
     assert rows[1] == _EmptyDoc()
     assert rows[2] is None
+
+
+def test_json_path_indexing(engine: Engine) -> None:
+    metadata = MetaData()
+    table = Table("json_paths", metadata, Column("id", Integer), Column("doc", JSON))
+    metadata.create_all(engine)
+
+    document = {"title": "hello", "n": 7, "nul": None, "sub": {"k": "v"}, "arr": [10, 20]}
+    with engine.begin() as connection:
+        connection.execute(insert(table), [{"id": 1, "doc": document}])
+
+    with engine.connect() as connection:
+        scalar = connection.scalar
+        assert connection.execute(select(table.c.doc["title"])).scalar() == "hello"
+        assert connection.execute(select(table.c.doc["n"])).scalar() == 7
+        assert connection.execute(select(table.c.doc[("sub", "k")])).scalar() == "v"
+        assert connection.execute(select(table.c.doc[("arr", 1)])).scalar() == 20
+        assert connection.execute(select(table.c.doc["title"].as_string())).scalar() == "hello"
+        assert connection.execute(select(table.c.doc["n"].as_integer())).scalar() == 7
+        # A JSON null and a path that matches nothing both come back as None,
+        # as on other backends. MonetDB's JSON.FILTER returns '[]' for a miss.
+        assert connection.execute(select(table.c.doc["nul"])).scalar() is None
+        assert connection.execute(select(table.c.doc["missing"])).scalar() is None
+        assert scalar is not None
+
+
+def test_pydantic_json_reports_schema_drift(engine: Engine) -> None:
+    from pydantic import ValidationError
+
+    metadata = MetaData()
+    table = Table("pyd_drift", metadata, Column("id", Integer), Column("doc", PydanticJSON(_Content)))
+    metadata.create_all(engine)
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql("""INSERT INTO pyd_drift (id, doc) VALUES (1, '{"title": "only"}')""")
+
+    # Stored JSON that no longer matches the model must fail loudly.
+    with engine.connect() as connection, pytest.raises(ValidationError):
+        connection.execute(select(table.c.doc)).scalar()
