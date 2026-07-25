@@ -65,6 +65,28 @@ class Requirements(SuiteRequirements):
         return exclusions.open()
 
     @property
+    def reflects_pk_names(self) -> Any:
+        return exclusions.open()
+
+    @property
+    def unique_constraints_reflect_as_index(self) -> Any:
+        # MonetDB backs a UNIQUE constraint with an index of the same name, and
+        # compiles a unique Index into a UNIQUE constraint, so the two are
+        # indistinguishable in the catalog. get_indexes() reports both.
+        return exclusions.closed()
+
+    @property
+    def foreign_keys_reflect_as_index(self) -> Any:
+        # MonetDB also indexes foreign keys, but get_indexes() filters those out
+        # because they are reported through get_foreign_keys().
+        return exclusions.closed()
+
+    @property
+    def reflect_indexes_with_ascdesc_as_expression(self) -> Any:
+        # MonetDB indexes carry no ordering, so none is reflected back.
+        return exclusions.closed()
+
+    @property
     def unique_constraint_reflection(self) -> Any:
         return exclusions.open()
 

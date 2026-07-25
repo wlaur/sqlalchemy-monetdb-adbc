@@ -49,6 +49,23 @@ class MonetDBJSONIndexType(_MonetDBJSONPathBase, sqltypes.JSON.JSONIndexType):
         return self._path_processor(self.string_literal_processor(dialect))
 
 
+class MonetDBBinary(sqltypes.LargeBinary):
+    """BLOB binding that does not need the DB-API ``Binary`` constructor.
+
+    PEP 249 requires a ``Binary`` type constructor, but neither
+    ``adbc_driver_manager.dbapi`` nor ``adbc_driver_monetdb.dbapi`` defines one.
+    ADBC binds Python ``bytes`` to Arrow binary directly, so pass them through.
+    """
+
+    def bind_processor(self, dialect: Dialect) -> _BindProcessorType[Any]:
+        def process(value: Any) -> Any:
+            if value is None:
+                return None
+            return bytes(value)
+
+        return process
+
+
 class MonetDBJSON(sqltypes.JSON):
     """MonetDB JSON.
 

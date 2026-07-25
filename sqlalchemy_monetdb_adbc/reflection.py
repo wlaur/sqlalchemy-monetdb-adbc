@@ -27,6 +27,11 @@ TABLE_TYPE_REMOTE = 5
 TABLE_TYPE_REPLICA = 6
 TABLE_TYPE_LOCAL_TEMPORARY = 30
 
+KEY_TYPE_PRIMARY = 0
+KEY_TYPE_UNIQUE = 1
+KEY_TYPE_FOREIGN = 2
+KEY_TYPE_CHECK = 4
+
 FK_ACTIONS = {
     0: "NO ACTION",
     1: "CASCADE",
@@ -66,6 +71,13 @@ class MonetDBReflection:
             query,
             {"name": table_name, "schema_id": self._schema_id(connection, schema)},
         ).scalar()
+
+        if table_id is None and schema is None:
+            # MonetDB puts local temporary tables in the "tmp" schema rather
+            # than the session's current schema.
+            table_id = connection.execute(
+                query, {"name": table_name, "schema_id": self._schema_id(connection, "tmp")}
+            ).scalar()
 
         if table_id is None:
             raise exc.NoSuchTableError(f"{schema}.{table_name}" if schema else table_name)
@@ -232,9 +244,9 @@ class MonetDBReflection:
         table_id = self._table_id(connection, table_name, schema)
         query = text(
             "SELECT k.name, o.name FROM sys.keys k JOIN sys.objects o ON k.id = o.id "
-            "WHERE k.table_id = :table_id AND k.type = 0 ORDER BY o.nr"
+            "WHERE k.table_id = :table_id AND k.type = :key_type ORDER BY o.nr"
         )
-        rows = connection.execute(query, {"table_id": table_id}).all()
+        rows = connection.execute(query, {"table_id": table_id, "key_type": KEY_TYPE_PRIMARY}).all()
 
         if not rows:
             return ReflectedPrimaryKeyConstraint(constrained_columns=[], name=None)
@@ -295,9 +307,9 @@ class MonetDBReflection:
         table_id = self._table_id(connection, table_name, schema)
         query = text(
             "SELECT k.name, o.name FROM sys.keys k JOIN sys.objects o ON k.id = o.id "
-            "WHERE k.table_id = :table_id AND k.type = 1 ORDER BY k.name, o.nr"
+            "WHERE k.table_id = :table_id AND k.type = :key_type ORDER BY k.name, o.nr"
         )
-        rows = connection.execute(query, {"table_id": table_id}).all()
+        rows = connection.execute(query, {"table_id": table_id, "key_type": KEY_TYPE_UNIQUE}).all()
 
         grouped: dict[str, list[str]] = defaultdict(list)
         for name, column in rows:
@@ -310,20 +322,33 @@ class MonetDBReflection:
         self, connection: Connection, table_name: str, schema: str | None = None, **kw: Any
     ) -> list[ReflectedIndex]:
         table_id = self._table_id(connection, table_name, schema)
+        # A MonetDB UNIQUE constraint owns both a key and an index of the same
+        # name; report those as unique indexes. Primary and foreign key indexes
+        # are internal and are reported through their own constraint methods.
         query = text(
-            "SELECT i.name, o.name, o.nr FROM sys.idxs i JOIN sys.objects o ON i.id = o.id "
-            "WHERE i.table_id = :table_id AND i.name NOT IN (SELECT name FROM sys.keys WHERE table_id = :table_id) "
+            "SELECT i.name, o.name, o.nr, k.type FROM sys.idxs i "
+            "JOIN sys.objects o ON i.id = o.id "
+            "LEFT JOIN sys.keys k ON k.name = i.name AND k.table_id = i.table_id "
+            "WHERE i.table_id = :table_id AND (k.type IS NULL OR k.type = :unique) "
             "ORDER BY i.name, o.nr"
         )
-        rows = connection.execute(query, {"table_id": table_id}).all()
+        rows = connection.execute(query, {"table_id": table_id, "unique": KEY_TYPE_UNIQUE}).all()
 
         grouped: dict[str, list[str]] = defaultdict(list)
-        for name, column, _nr in rows:
+        unique_names: set[str] = set()
+        for name, column, _nr, key_type in rows:
             grouped[name].append(column)
+            if key_type == KEY_TYPE_UNIQUE:
+                unique_names.add(name)
 
-        return [
-            ReflectedIndex(name=name, column_names=list(columns), unique=False) for name, columns in grouped.items()
-        ]
+        indexes: list[ReflectedIndex] = []
+        for name, columns in grouped.items():
+            index = ReflectedIndex(name=name, column_names=list(columns), unique=name in unique_names)
+            if name in unique_names:
+                index["duplicates_constraint"] = name
+            indexes.append(index)
+
+        return indexes
 
     @reflection.cache
     def get_check_constraints(
@@ -336,9 +361,11 @@ class MonetDBReflection:
 
         query = text(
             "SELECT k.name, sys.check_constraint(:schema, k.name) FROM sys.keys k "
-            "WHERE k.table_id = :table_id AND k.type = 4 ORDER BY k.name"
+            "WHERE k.table_id = :table_id AND k.type = :key_type ORDER BY k.name"
         )
-        rows = connection.execute(query, {"table_id": table_id, "schema": resolved_schema}).all()
+        rows = connection.execute(
+            query, {"table_id": table_id, "schema": resolved_schema, "key_type": KEY_TYPE_CHECK}
+        ).all()
 
         return [ReflectedCheckConstraint(name=name, sqltext=sqltext) for name, sqltext in rows]
 

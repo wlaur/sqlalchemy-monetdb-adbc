@@ -21,6 +21,7 @@ from sqlalchemy_monetdb_adbc.types import (
     HUGEINT,
     INET,
     TINYINT,
+    MonetDBBinary,
     MonetDBJSON,
     MonetDBJSONIndexType,
     MonetDBJSONPathType,
@@ -91,6 +92,7 @@ class MonetDBADBCDialect(MonetDBReflection, default.DefaultDialect):
 
     colspecs: ClassVar[dict[type[sqltypes.TypeEngine[Any]], type[sqltypes.TypeEngine[Any]]]] = {  # pyright: ignore[reportIncompatibleVariableOverride]
         sqltypes.JSON: MonetDBJSON,
+        sqltypes.LargeBinary: MonetDBBinary,
         sqltypes.JSON.JSONPathType: MonetDBJSONPathType,
         sqltypes.JSON.JSONIndexType: MonetDBJSONIndexType,
     }

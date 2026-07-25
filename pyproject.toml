@@ -98,3 +98,12 @@ testpaths = ["tests"]
 markers = [
     "integration: requires a running MonetDB server (set MONETDB_TEST_URI)",
 ]
+
+# pyarrow ships no type stubs; the dialect itself does not import it, but the
+# integration tests exercise the Arrow-native path.
+[[tool.pyright.executionEnvironments]]
+root = "tests"
+reportMissingTypeStubs = false
+reportUnknownMemberType = false
+reportUnknownVariableType = false
+reportUnknownArgumentType = false
