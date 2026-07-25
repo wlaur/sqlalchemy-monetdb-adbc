@@ -170,7 +170,14 @@ class MonetDBReflection:
 
     @reflection.cache
     def get_sequence_names(self, connection: Connection, schema: str | None = None, **kw: Any) -> list[str]:
-        query = text("SELECT name FROM sys.sequences WHERE schema_id = :schema_id ORDER BY name")
+        # An AUTO_INCREMENT column owns a generated sequence, named in that
+        # column's default. Only sequences the user declared are listed.
+        query = text(
+            "SELECT s.name FROM sys.sequences s WHERE s.schema_id = :schema_id AND NOT EXISTS ("
+            'SELECT 1 FROM sys.columns c WHERE c."default" = '
+            "'next value for \"' || (SELECT n.name FROM sys.schemas n WHERE n.id = s.schema_id) "
+            "|| '\".\"' || s.name || '\"') ORDER BY s.name"
+        )
         rows = connection.execute(query, {"schema_id": self._schema_id(connection, schema)})
         return [row[0] for row in rows]
 

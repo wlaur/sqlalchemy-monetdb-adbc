@@ -30,6 +30,17 @@ class Requirements(SuiteRequirements):
         return exclusions.open()
 
     @property
+    def returning_star(self) -> Any:
+        # MonetDB requires an explicit column list after RETURNING.
+        return exclusions.closed()
+
+    @property
+    def dbapi_lastrowid(self) -> Any:
+        # ADBC exposes no lastrowid, and MonetDB none over it. RETURNING is how
+        # this dialect fetches generated values.
+        return exclusions.closed()
+
+    @property
     def sequences(self) -> Any:
         return exclusions.open()
 
