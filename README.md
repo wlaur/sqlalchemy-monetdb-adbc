@@ -14,21 +14,21 @@ and is validated against a live MonetDB server. It is not released to PyPI yet.
 
 ### Dialect compliance suite
 
-SQLAlchemy's own dialect suite runs from `suite/` (see Development). 1065 of its
-tests pass; the known failures are tracked and mostly cluster in reflection
-edge cases, `RETURNING` variants, and numeric precision.
+SQLAlchemy's own dialect suite runs from `suite/` (see Development). 1127 of its
+tests pass; the known failures cluster in multi-table reflection
+(`get_multi_*`), and in a few places where MonetDB will not infer a type for a
+bare parameter, such as `WHERE ? = ?` or `LIMIT 1 + 2`.
 
 Common table expressions are fully supported, including recursive CTEs, CTEs
 over `VALUES`, and CTEs driving `UPDATE`/`DELETE`. MonetDB's `WITH` accepts only
 `SELECT` or `VALUES`, so a CTE cannot itself be an `INSERT`/`UPDATE`/`DELETE`.
 
-Two behaviors are limited by `adbc-driver-monetdb` rather than by MonetDB, and
-are marked `DRIVER-WORKAROUND` in the source:
-
-- `CursorResult.rowcount` is not reliable for single-statement DML, so
-  `supports_sane_rowcount` is off.
-- `LargeBinary` binds through a dialect-specific processor, because the DB-API
-  module does not export the PEP 249 `Binary` constructor.
+The dialect requires `adbc-driver-monetdb` 0.8.2 or newer, which reports
+truthful row counts and exports the PEP 249 `Binary` constructor. One
+`DRIVER-WORKAROUND` remains in the source, for an upstream Apache arrow-adbc
+behavior: ADBC always returns an Arrow stream, so the DB-API layer reports an
+empty `description` rather than `None` for statements that produce no result
+set, and SQLAlchemy needs `None` to decide that a statement returned no rows.
 
 ### MonetDB behaviors worth knowing
 

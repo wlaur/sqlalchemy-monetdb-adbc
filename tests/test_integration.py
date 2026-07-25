@@ -1,6 +1,7 @@
 import datetime
 import decimal
 import uuid
+import warnings
 from collections.abc import Iterator
 from typing import Any
 
@@ -33,6 +34,7 @@ from sqlalchemy import (
     text,
     update,
 )
+from sqlalchemy.exc import SAWarning
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 from sqlalchemy_monetdb_adbc import raw_adbc_connection
@@ -314,3 +316,63 @@ def test_bulk_delete_on_self_referential_table(engine: Engine) -> None:
         connection.execute(update(table).values(parent_id=None))
         connection.execute(delete(table))
         assert connection.execute(select(table.c.id)).scalars().all() == []
+
+
+def test_rowcount_reports_affected_rows(engine: Engine) -> None:
+    metadata = MetaData()
+    table = Table("rowcount_target", metadata, Column("id", Integer), Column("label", String(10)))
+    metadata.create_all(engine)
+
+    with engine.begin() as connection:
+        assert connection.execute(insert(table), [{"id": i, "label": "x"} for i in range(5)]).rowcount == 5
+        assert connection.execute(update(table).values(label="y")).rowcount == 5
+        assert connection.execute(update(table).where(table.c.id == 999).values(label="z")).rowcount == 0
+        assert connection.execute(delete(table).where(table.c.id < 2)).rowcount == 2
+        assert connection.execute(delete(table)).rowcount == 3
+
+
+def test_orm_versioned_update_and_delete(engine: Engine) -> None:
+    """Both paths depend on a truthful rowcount."""
+
+    class Base(DeclarativeBase):
+        pass
+
+    class Versioned(Base):
+        __tablename__ = "orm_versioned"
+
+        id: Mapped[int] = mapped_column(primary_key=True)
+        name: Mapped[str] = mapped_column(String(20))
+        version_id: Mapped[int] = mapped_column(Integer, nullable=False)
+
+        __mapper_args__ = {"version_id_col": version_id}  # noqa: RUF012
+
+    Base.metadata.create_all(engine)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", SAWarning)
+        with Session(engine) as session:
+            row = Versioned(name="first")
+            session.add(row)
+            session.commit()
+
+            row.name = "second"
+            session.commit()
+            assert row.version_id == 2
+
+            session.delete(row)
+            session.commit()
+            assert session.scalars(select(Versioned.id)).all() == []
+
+
+def test_large_binary_uses_the_dbapi_binary_constructor(engine: Engine) -> None:
+    from adbc_driver_monetdb import dbapi
+
+    assert hasattr(dbapi, "Binary")
+
+    metadata = MetaData()
+    table = Table("binary_target", metadata, Column("payload", LargeBinary))
+    metadata.create_all(engine)
+
+    with engine.begin() as connection:
+        connection.execute(insert(table), [{"payload": b"\x00\xff binary"}])
+        assert connection.execute(select(table.c.payload)).scalar() == b"\x00\xff binary"

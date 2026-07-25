@@ -21,7 +21,6 @@ from sqlalchemy_monetdb_adbc.types import (
     HUGEINT,
     INET,
     TINYINT,
-    MonetDBBinary,
     MonetDBFloat,
     MonetDBJSON,
     MonetDBJSONIndexType,
@@ -82,12 +81,8 @@ class MonetDBADBCDialect(MonetDBReflection, default.DefaultDialect):
     update_executemany_returning = False
     delete_executemany_returning = False
 
-    # DRIVER-WORKAROUND(adbc-driver-monetdb #1): ExecuteQuery reports
-    # rows_affected as 0 for DML, while ExecuteUpdate reports it correctly.
-    # The DB-API layer calls ExecuteQuery from execute() and ExecuteUpdate
-    # from executemany(). Set both back to True once the driver is fixed.
-    supports_sane_rowcount = False
-    supports_sane_multi_rowcount = False
+    supports_sane_rowcount = True
+    supports_sane_multi_rowcount = True
 
     ischema_names: ClassVar[dict[str, type[sqltypes.TypeEngine[Any]]]] = {
         "double": DOUBLE_PRECISION,
@@ -100,7 +95,6 @@ class MonetDBADBCDialect(MonetDBReflection, default.DefaultDialect):
     colspecs: ClassVar[dict[type[sqltypes.TypeEngine[Any]], type[sqltypes.TypeEngine[Any]]]] = {  # pyright: ignore[reportIncompatibleVariableOverride]
         sqltypes.Float: MonetDBFloat,
         sqltypes.JSON: MonetDBJSON,
-        sqltypes.LargeBinary: MonetDBBinary,
         sqltypes.Time: MonetDBTime,
         sqltypes.JSON.JSONPathType: MonetDBJSONPathType,
         sqltypes.JSON.JSONIndexType: MonetDBJSONIndexType,
