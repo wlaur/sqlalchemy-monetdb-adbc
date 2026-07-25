@@ -320,36 +320,88 @@ class MonetDBIdentifierPreparer(compiler.IdentifierPreparer):
 
 
 class MonetDBCursor:
-    """DB-API cursor wrapper that reports "no result set" as ``None``.
+    """DB-API cursor wrapper with column-wise row conversion.
 
-    DRIVER-WORKAROUND(adbc-driver-manager #3, upstream): not fixed by an
-    adbc-driver-monetdb release; keep until Apache arrow-adbc changes it.
+    Two departures from ``adbc_driver_manager``'s cursor:
 
-    ADBC always hands back an Arrow stream, so ``adbc_driver_manager`` derives
-    an empty ``description`` list for DDL and for DML without RETURNING. PEP 249
-    requires ``None`` there, and SQLAlchemy relies on that to decide whether a
-    statement returned rows: an empty list is falsy but not ``None``, so it
-    would build a zero-column result instead of a no-rows result.
+    1. ``description`` reports "no result set" as ``None``.
+       DRIVER-WORKAROUND(adbc-driver-manager #3, upstream): ADBC always hands
+       back an Arrow stream, so the manager derives an empty ``description``
+       list for DDL and for DML without RETURNING. PEP 249 requires ``None``
+       there, and SQLAlchemy uses it to decide whether a statement returned
+       rows: an empty list is falsy but not ``None``, so it would build a
+       zero-column result instead of a no-rows result.
+
+    2. Rows are converted one column at a time rather than one cell at a time.
+       The manager builds each row as
+       ``tuple(arr[i].as_py() for arr in batch.columns)``, which pays a pyarrow
+       scalar boxing cost per cell. Converting whole columns with
+       ``to_pylist()`` and zipping is several times faster for wide or long
+       results, and batches are still consumed lazily so ``stream_results``
+       and ``yield_per`` keep working.
     """
 
-    __slots__ = (
-        "_cursor",
-        "close",
-        "execute",
-        "executemany",
-        "fetchall",
-        "fetchmany",
-        "fetchone",
-    )
+    __slots__ = ("_batch", "_cursor", "_index", "_reader", "close", "executemany")
 
     def __init__(self, cursor: Any) -> None:
         self._cursor = cursor
-        self.execute: Callable[..., Any] = cursor.execute
+        self._reader: Any = None
+        self._batch: list[tuple[Any, ...]] = []
+        self._index = 0
         self.executemany: Callable[..., Any] = cursor.executemany
-        self.fetchone: Callable[[], Any] = cursor.fetchone
-        self.fetchmany: Callable[..., Any] = cursor.fetchmany
-        self.fetchall: Callable[[], Any] = cursor.fetchall
         self.close: Callable[[], None] = cursor.close
+
+    def _reset(self) -> None:
+        self._reader = None
+        self._batch = []
+        self._index = 0
+
+    def execute(self, operation: str, parameters: Any = None) -> Any:
+        self._reset()
+        return self._cursor.execute(operation, parameters)
+
+    def _next_batch(self) -> bool:
+        """Buffer the next record batch as tuples. False when exhausted."""
+        if self._reader is None:
+            if self._cursor.description is None:
+                return False
+            self._reader = self._cursor.fetch_record_batch()
+
+        while True:
+            try:
+                batch = self._reader.read_next_batch()
+            except StopIteration:
+                return False
+            if batch.num_rows:
+                self._batch = list(zip(*(column.to_pylist() for column in batch.columns), strict=True))
+                self._index = 0
+                return True
+
+    def fetchone(self) -> tuple[Any, ...] | None:
+        while self._index >= len(self._batch):
+            if not self._next_batch():
+                return None
+        row = self._batch[self._index]
+        self._index += 1
+        return row
+
+    def fetchmany(self, size: int | None = None) -> list[tuple[Any, ...]]:
+        count = int(self._cursor.arraysize) if size is None else size
+        rows: list[tuple[Any, ...]] = []
+        while len(rows) < count:
+            row = self.fetchone()
+            if row is None:
+                break
+            rows.append(row)
+        return rows
+
+    def fetchall(self) -> list[tuple[Any, ...]]:
+        rows = self._batch[self._index :]
+        self._index = len(self._batch)
+        while self._next_batch():
+            rows.extend(self._batch)
+            self._index = len(self._batch)
+        return rows
 
     @property
     def description(self) -> AbstractSequence[Any] | None:

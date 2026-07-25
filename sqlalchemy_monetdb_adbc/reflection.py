@@ -74,9 +74,15 @@ class MonetDBReflection:
 
         if table_id is None and schema is None:
             # MonetDB puts local temporary tables in the "tmp" schema rather
-            # than the session's current schema.
+            # than the session's current schema. Match only genuine temporary
+            # tables, so an unrelated table in "tmp" cannot shadow a miss.
             table_id = connection.execute(
-                query, {"name": table_name, "schema_id": self._schema_id(connection, "tmp")}
+                text("SELECT id FROM sys.tables WHERE name = :name AND schema_id = :schema_id AND type = :type"),
+                {
+                    "name": table_name,
+                    "schema_id": self._schema_id(connection, "tmp"),
+                    "type": TABLE_TYPE_LOCAL_TEMPORARY,
+                },
             ).scalar()
 
         if table_id is None:
