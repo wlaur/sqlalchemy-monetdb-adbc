@@ -196,22 +196,21 @@ class MonetDBReflection:
     ) -> list[ReflectedColumn]:
         table_id = self._table_id(connection, table_name, schema)
         query = text(
-            'SELECT name, type, type_digits, type_scale, "null", "default", number '
-            "FROM sys.columns WHERE table_id = :table_id ORDER BY number"
+            'SELECT c.name, c.type, c.type_digits, c.type_scale, c."null", c."default", c.number, cm.remark '
+            "FROM sys.columns c LEFT JOIN sys.comments cm ON c.id = cm.id "
+            "WHERE c.table_id = :table_id ORDER BY c.number"
         )
         rows = connection.execute(query, {"table_id": table_id}).all()
 
         columns: list[ReflectedColumn] = []
         for row in rows:
-            name, type_name, digits, scale, nullable, default, _number = row
+            name, type_name, digits, scale, nullable, default, _number, comment = row
             autoincrement = False
             column_default = default
 
-            if default is not None:
-                match = AUTOINCREMENT_DEFAULT.match(default)
-                if match is not None:
-                    autoincrement = True
-                    column_default = None
+            if default is not None and AUTOINCREMENT_DEFAULT.match(default) is not None:
+                autoincrement = True
+                column_default = None
 
             columns.append(
                 ReflectedColumn(
@@ -220,6 +219,7 @@ class MonetDBReflection:
                     nullable=bool(nullable),
                     default=column_default,
                     autoincrement=autoincrement,
+                    comment=comment,
                 )
             )
 

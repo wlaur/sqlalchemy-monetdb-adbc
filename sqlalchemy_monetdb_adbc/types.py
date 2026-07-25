@@ -1,6 +1,60 @@
-from typing import Any
+from collections.abc import Sequence
+from typing import Any, cast
 
 from sqlalchemy import types as sqltypes
+from sqlalchemy.engine.interfaces import Dialect
+from sqlalchemy.sql.type_api import (
+    _BindProcessorType,  # pyright: ignore[reportPrivateUsage]
+    _LiteralProcessorType,  # pyright: ignore[reportPrivateUsage]
+)
+
+
+def _json_path(value: Any) -> str:
+    """Render a SQLAlchemy JSON index or path as a MonetDB JSONPath string."""
+    if isinstance(value, str):
+        return f'$."{value}"'
+    if isinstance(value, int):
+        return f"$[{value}]"
+    if isinstance(value, Sequence):
+        elements = cast(Sequence[Any], value)
+        parts = "".join(f"[{element}]" if isinstance(element, int) else f'."{element}"' for element in elements)
+        return f"${parts}"
+    return "$"
+
+
+class _MonetDBJSONPathBase:
+    def _path_processor(self, super_proc: _BindProcessorType[str] | None) -> _BindProcessorType[Any]:
+        def process(value: Any) -> Any:
+            rendered = value if isinstance(value, str) and value.startswith("$") else _json_path(value)
+            if super_proc:
+                return super_proc(rendered)
+            return rendered
+
+        return process
+
+
+class MonetDBJSONPathType(_MonetDBJSONPathBase, sqltypes.JSON.JSONPathType):
+    def bind_processor(self, dialect: Dialect) -> _BindProcessorType[Any]:
+        return self._path_processor(self.string_bind_processor(dialect))
+
+    def literal_processor(self, dialect: Dialect) -> _LiteralProcessorType[Any]:
+        return self._path_processor(self.string_literal_processor(dialect))
+
+
+class MonetDBJSONIndexType(_MonetDBJSONPathBase, sqltypes.JSON.JSONIndexType):
+    def bind_processor(self, dialect: Dialect) -> _BindProcessorType[Any]:
+        return self._path_processor(self.string_bind_processor(dialect))
+
+    def literal_processor(self, dialect: Dialect) -> _LiteralProcessorType[Any]:
+        return self._path_processor(self.string_literal_processor(dialect))
+
+
+class MonetDBJSON(sqltypes.JSON):
+    """MonetDB JSON.
+
+    MonetDB validates and normalizes JSON on input, so round-tripped documents
+    keep their values but not their original whitespace or key order.
+    """
 
 
 class TINYINT(sqltypes.Integer):

@@ -3,13 +3,30 @@ from collections.abc import Callable
 from typing import Any, cast
 
 from sqlalchemy import types as sqltypes
-from sqlalchemy.sql import compiler
+from sqlalchemy.sql import compiler, operators
 from sqlalchemy.sql.ddl import CreateIndex, CreateSequence, DropSequence
-from sqlalchemy.sql.elements import ClauseElement
+from sqlalchemy.sql.elements import ClauseElement, UnaryExpression
+from sqlalchemy.sql.expression import cast as cast_expression
 from sqlalchemy.sql.schema import Column, ForeignKeyConstraint, Sequence, Table
 from sqlalchemy.sql.selectable import Select
 
+from sqlalchemy_monetdb_adbc.ddl import self_referential_foreign_keys
+
 FK_ACTION = re.compile(r"^(?:RESTRICT|CASCADE|SET NULL|NO ACTION|SET DEFAULT)$", re.IGNORECASE)
+
+ORDERING_MODIFIERS = frozenset({operators.asc_op, operators.desc_op, operators.nulls_first_op, operators.nulls_last_op})
+
+
+def _strip_ordering(expression: Any) -> ClauseElement:
+    """Drop ASC/DESC/NULLS modifiers from an index expression.
+
+    MonetDB's CREATE INDEX grammar accepts only bare column expressions; its
+    indexes carry no ordering to preserve.
+    """
+    while isinstance(expression, UnaryExpression) and expression.modifier in ORDERING_MODIFIERS:
+        expression = expression.element
+
+    return cast(ClauseElement, expression)
 
 
 class MonetDBTypeCompiler(compiler.GenericTypeCompiler):
@@ -133,6 +150,47 @@ class MonetDBDDLCompiler(compiler.DDLCompiler):
     def visit_drop_sequence(self, drop: DropSequence, **kw: Any) -> str:
         return f"DROP SEQUENCE {self.preparer.format_sequence(drop.element)}"
 
+    def create_table_constraints(
+        self,
+        table: Table,
+        _include_foreign_key_constraints: Any = None,
+        **kw: Any,
+    ) -> str:
+        # MonetDB validates a FOREIGN KEY against the referenced PRIMARY KEY as
+        # the CREATE TABLE is parsed, so a self-referential one cannot be
+        # inlined. The after_create hook in ddl.py adds them by ALTER TABLE
+        # once the table, and therefore its primary key, exists.
+        deferred = set(self_referential_foreign_keys(table))
+        included = _include_foreign_key_constraints
+        if included is None:
+            included = table.foreign_key_constraints
+
+        return super().create_table_constraints(  # pyright: ignore[reportUnknownMemberType]
+            table,
+            _include_foreign_key_constraints={fkc for fkc in included if fkc not in deferred},
+            **kw,
+        )
+
+    def _quoted_column_path(self, column: Column[Any]) -> str:
+        # MonetDB's COMMENT ON COLUMN grammar rejects some unquoted identifiers
+        # that are legal elsewhere ("id" lexes as its own token), so quote every
+        # part unconditionally.
+        quote = self.preparer.quote_identifier
+        table = column.table
+        parts = [quote(table.name), quote(column.name)]
+        if table.schema is not None:
+            parts.insert(0, quote(table.schema))
+        return ".".join(parts)
+
+    def visit_set_column_comment(self, create: Any, **kw: Any) -> str:
+        column = cast(Column[Any], create.element)
+        comment = self.sql_compiler.render_literal_value(column.comment, sqltypes.String())
+        return f"COMMENT ON COLUMN {self._quoted_column_path(column)} IS {comment}"
+
+    def visit_drop_column_comment(self, drop: Any, **kw: Any) -> str:
+        column = cast(Column[Any], drop.element)
+        return f"COMMENT ON COLUMN {self._quoted_column_path(column)} IS NULL"
+
     def define_constraint_cascades(self, constraint: ForeignKeyConstraint) -> str:
         text = ""
         validate = cast(
@@ -190,7 +248,7 @@ class MonetDBDDLCompiler(compiler.DDLCompiler):
 
         table = cast(Table, index.table)
         columns = ", ".join(
-            self.sql_compiler.process(cast(ClauseElement, expr), include_table=False, literal_binds=True)
+            self.sql_compiler.process(_strip_ordering(expr), include_table=False, literal_binds=True)
             for expr in index.expressions
         )
 
@@ -272,6 +330,27 @@ class MonetDBCompiler(compiler.SQLCompiler):
             return f"{left} {operator}* {right}"
         rendered_flags = self.render_literal_value(flags, sqltypes.STRINGTYPE)
         return f"{left} {operator} CONCAT('(?', {rendered_flags}, ')', {right})"
+
+    def _json_extract(self, binary: Any, _cast_applied: bool = False, **kw: Any) -> str:
+        if not _cast_applied and binary.type._type_affinity is not sqltypes.JSON:
+            kw["_cast_applied"] = True
+            return self.process(cast_expression(binary, binary.type), **kw)
+
+        left = self.process(binary.left, **kw)
+        right = self.process(binary.right, **kw)
+        filtered = f"JSON.FILTER({left}, {right})"
+
+        if binary.type._type_affinity is sqltypes.JSON:
+            return filtered
+
+        # JSON.TEXT unwraps a scalar; JSON null must still come back as SQL NULL.
+        return f"CASE {filtered} WHEN 'null' THEN NULL ELSE JSON.TEXT({filtered}) END"
+
+    def visit_json_getitem_op_binary(self, binary: Any, operator: Any, **kw: Any) -> str:
+        return self._json_extract(binary, **kw)
+
+    def visit_json_path_getitem_op_binary(self, binary: Any, operator: Any, **kw: Any) -> str:
+        return self._json_extract(binary, **kw)
 
     def visit_regexp_match_op_binary(self, binary: Any, operator: Any, **kw: Any) -> str:
         return self._regexp("~", binary, **kw)

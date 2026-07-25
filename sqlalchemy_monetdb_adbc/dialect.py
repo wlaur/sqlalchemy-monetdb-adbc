@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from typing import Any, ClassVar, cast
 
 from sqlalchemy import pool
@@ -15,7 +16,15 @@ from sqlalchemy.sql import sqltypes
 from sqlalchemy_monetdb_adbc.base import MonetDBExecutionContext, MonetDBIdentifierPreparer
 from sqlalchemy_monetdb_adbc.compiler import MonetDBCompiler, MonetDBDDLCompiler, MonetDBTypeCompiler
 from sqlalchemy_monetdb_adbc.reflection import MonetDBReflection
-from sqlalchemy_monetdb_adbc.types import DOUBLE_PRECISION, HUGEINT, INET, TINYINT
+from sqlalchemy_monetdb_adbc.types import (
+    DOUBLE_PRECISION,
+    HUGEINT,
+    INET,
+    TINYINT,
+    MonetDBJSON,
+    MonetDBJSONIndexType,
+    MonetDBJSONPathType,
+)
 from sqlalchemy_monetdb_adbc.types import URL as MONETDB_URL
 
 SECURE_BACKEND_NAMES = frozenset({"monetdbs"})
@@ -79,6 +88,22 @@ class MonetDBADBCDialect(MonetDBReflection, default.DefaultDialect):
         "tinyint": TINYINT,
         "url": MONETDB_URL,
     }
+
+    colspecs: ClassVar[dict[type[sqltypes.TypeEngine[Any]], type[sqltypes.TypeEngine[Any]]]] = {  # pyright: ignore[reportIncompatibleVariableOverride]
+        sqltypes.JSON: MonetDBJSON,
+        sqltypes.JSON.JSONPathType: MonetDBJSONPathType,
+        sqltypes.JSON.JSONIndexType: MonetDBJSONIndexType,
+    }
+
+    def __init__(
+        self,
+        json_serializer: Callable[[Any], str] | None = None,
+        json_deserializer: Callable[[str], Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._json_serializer = json_serializer
+        self._json_deserializer = json_deserializer
 
     @classmethod
     def import_dbapi(cls) -> DBAPIModule:
