@@ -98,9 +98,25 @@ class MonetDBNumeric(sqltypes.Numeric[Any]):
     says a Numeric column yields Decimal.
     """
 
+    def bind_processor(self, dialect: Dialect) -> _BindProcessorType[Any]:
+        as_decimal = self.asdecimal
+
+        def process(value: Any) -> Any:
+            # ADBC infers a bound column's Arrow type from its first value, so a
+            # Decimal reaching a column declared asdecimal=False breaks binding.
+            if not as_decimal and isinstance(value, Decimal):
+                return float(value)
+            return value
+
+        return process
+
     def result_processor(self, dialect: Dialect, coltype: Any) -> _ResultProcessorType[Any] | None:
         if not self.asdecimal:
-            return None
+
+            def to_float(value: Any) -> Any:
+                return float(value) if isinstance(value, Decimal) else value
+
+            return to_float
 
         scale = self._effective_decimal_return_scale
 

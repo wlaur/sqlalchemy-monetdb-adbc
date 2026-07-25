@@ -159,6 +159,23 @@ class Requirements(SuiteRequirements):
         return exclusions.open()
 
     @property
+    def sql_expression_limit_offset(self) -> Any:
+        # MonetDB's LIMIT and OFFSET take a literal or a parameter, not an
+        # expression: "LIMIT 1 + 2" is a syntax error.
+        return exclusions.closed()
+
+    @property
+    def standalone_binds(self) -> Any:
+        # MonetDB refuses to infer a type for a bare parameter, so it rejects
+        # "? = ?" and "? IS NOT NULL". A cast makes either work, but SQLAlchemy
+        # emits the parameter alone here.
+        return exclusions.closed()
+
+    @property
+    def standalone_null_binds_whereclause(self) -> Any:
+        return exclusions.closed()
+
+    @property
     def regexp_match(self) -> Any:
         # MonetDB has no regular-expression match operator. Its "~" is
         # mbr_contains, a geometry operator, so emitting it would be wrong
