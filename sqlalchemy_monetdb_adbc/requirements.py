@@ -165,7 +165,8 @@ class Requirements(SuiteRequirements):
 
     @property
     def sane_rowcount(self) -> Any:
-        # adbc-driver-monetdb reports rows_affected as 0 from ExecuteQuery.
+        # DRIVER-WORKAROUND(adbc-driver-monetdb #1): ExecuteQuery reports
+        # rows_affected as 0 for DML. Reopen once the driver is fixed.
         return exclusions.closed()
 
     @property

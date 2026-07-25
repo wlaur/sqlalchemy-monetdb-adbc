@@ -322,6 +322,9 @@ class MonetDBIdentifierPreparer(compiler.IdentifierPreparer):
 class MonetDBCursor:
     """DB-API cursor wrapper that reports "no result set" as ``None``.
 
+    DRIVER-WORKAROUND(adbc-driver-manager #3, upstream): not fixed by an
+    adbc-driver-monetdb release; keep until Apache arrow-adbc changes it.
+
     ADBC always hands back an Arrow stream, so ``adbc_driver_manager`` derives
     an empty ``description`` list for DDL and for DML without RETURNING. PEP 249
     requires ``None`` there, and SQLAlchemy relies on that to decide whether a

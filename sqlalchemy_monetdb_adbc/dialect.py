@@ -77,8 +77,10 @@ class MonetDBADBCDialect(MonetDBReflection, default.DefaultDialect):
     update_executemany_returning = False
     delete_executemany_returning = False
 
-    # adbc-driver-monetdb reports rows_affected only from ExecuteUpdate, which
-    # the DB-API layer uses for executemany but not for execute.
+    # DRIVER-WORKAROUND(adbc-driver-monetdb #1): ExecuteQuery reports
+    # rows_affected as 0 for DML, while ExecuteUpdate reports it correctly.
+    # The DB-API layer calls ExecuteQuery from execute() and ExecuteUpdate
+    # from executemany(). Set both back to True once the driver is fixed.
     supports_sane_rowcount = False
     supports_sane_multi_rowcount = False
 

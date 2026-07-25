@@ -33,6 +33,51 @@ jobs:
       - run: uv run --no-sync pyright
       - run: uv run --no-sync pytest
 
+  integration:
+    name: Integration (MonetDB ${{ matrix.monetdb-version }})
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        monetdb-version: ["11.55.7-2"]
+    services:
+      monetdb:
+        image: wlaur/monetdb-container:${{ matrix.monetdb-version }}
+        ports:
+          - 50000:50000
+        env:
+          MDB_DB_ADMIN_PASS: monetdb
+          MDB_CREATE_DBS: test
+    env:
+      MONETDB_TEST_URI: monetdb://monetdb:monetdb@localhost:50000/test
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.13"
+      - run: uv sync --locked --all-groups
+      - name: Wait for MonetDB
+        run: |
+          for _ in $(seq 1 60); do
+            if uv run --no-sync python -c "
+          from adbc_driver_monetdb import dbapi
+          dbapi.connect('$MONETDB_TEST_URI').close()
+          "; then exit 0; fi
+            sleep 2
+          done
+          echo "MonetDB did not become ready" >&2
+          exit 1
+      - name: Integration tests
+        run: uv run --no-sync pytest tests -m integration
+      # Reported, not yet gated: the compliance suite still has known failures
+      # (see README, "Dialect compliance suite"). Flip continue-on-error off
+      # once it is green so regressions block the merge.
+      - name: SQLAlchemy dialect compliance suite
+        continue-on-error: true
+        run: |
+          uv run --no-sync pytest suite -o addopts="" \
+            --dburi "$MONETDB_TEST_URI"
+
   build:
     name: Build distributions
     runs-on: ubuntu-latest
@@ -59,7 +104,7 @@ jobs:
   publish:
     name: Publish to PyPI
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [test, build]
+    needs: [test, integration, build]
     runs-on: ubuntu-latest
     environment:
       name: pypi
