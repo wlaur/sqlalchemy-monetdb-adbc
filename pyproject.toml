@@ -24,6 +24,7 @@ classifiers = [
 ]
 dependencies = [
     "adbc-driver-monetdb>=0.8.2",
+    "pydantic>=2",
     "pyarrow>=25",
     "sqlalchemy>=2.0.34",
 ]

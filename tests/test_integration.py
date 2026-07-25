@@ -3,10 +3,12 @@ import decimal
 import uuid
 import warnings
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, cast
 
 import pytest
+from pydantic import BaseModel
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     Column,
@@ -37,7 +39,7 @@ from sqlalchemy import (
 from sqlalchemy.exc import SAWarning
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
-from sqlalchemy_monetdb_adbc import raw_adbc_connection
+from sqlalchemy_monetdb_adbc import PydanticJSON, raw_adbc_connection
 
 pytestmark = pytest.mark.integration
 
@@ -376,3 +378,79 @@ def test_large_binary_uses_the_dbapi_binary_constructor(engine: Engine) -> None:
     with engine.begin() as connection:
         connection.execute(insert(table), [{"payload": b"\x00\xff binary"}])
         assert connection.execute(select(table.c.payload)).scalar() == b"\x00\xff binary"
+
+
+class _Content(BaseModel):
+    title: str
+    tags: list[str]
+    views: int
+
+
+class _Other(BaseModel):
+    title: str
+
+
+def test_pydantic_json_round_trip(engine: Engine) -> None:
+    metadata = MetaData()
+    table = Table("pyd_docs", metadata, Column("id", Integer), Column("doc", PydanticJSON(_Content)))
+    metadata.create_all(engine)
+
+    content = _Content(title="Hello", tags=["a", "b"], views=1)
+    with engine.begin() as connection:
+        connection.execute(insert(table), [{"id": 1, "doc": content}, {"id": 2, "doc": None}])
+
+    with engine.connect() as connection:
+        rows: dict[int, _Content | None] = {
+            row.id: row.doc for row in connection.execute(select(table.c.id, table.c.doc).order_by(table.c.id))
+        }
+
+    assert isinstance(rows[1], _Content)
+    assert rows[1] == content
+    assert rows[2] is None
+
+
+def test_pydantic_json_creates_a_json_column(engine: Engine) -> None:
+    metadata = MetaData()
+    Table("pyd_ddl", metadata, Column("doc", PydanticJSON(_Content)))
+    metadata.create_all(engine)
+
+    columns = {column["name"]: column for column in inspect(engine).get_columns("pyd_ddl")}
+    assert isinstance(columns["doc"]["type"], JSON)
+
+
+def test_pydantic_json_cache_key_distinguishes_models() -> None:
+    # cache_ok is True, so two column types differing only by model must not
+    # share a compiled-statement cache entry.
+    def cache_key(model: type[BaseModel]) -> Any:
+        return cast(Any, PydanticJSON(model))._static_cache_key
+
+    assert cache_key(_Content) != cache_key(_Other)
+    assert cache_key(_Content) == cache_key(_Content)
+
+
+def test_pydantic_json_orm_attribute_is_the_model(engine: Engine) -> None:
+    class Base(DeclarativeBase):
+        pass
+
+    class Article(Base):
+        __tablename__ = "pyd_article"
+
+        id: Mapped[int] = mapped_column(Integer, primary_key=True)
+        content: Mapped[_Content] = mapped_column(PydanticJSON(_Content))
+
+    Base.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        session.add(Article(content=_Content(title="Hello", tags=[], views=1)))
+        session.commit()
+
+    with Session(engine) as session:
+        article = session.scalars(select(Article)).one()
+        assert isinstance(article.content, _Content)
+        assert article.content.title == "Hello"
+
+        article.content = article.content.model_copy(update={"views": 2})
+        session.commit()
+
+    with Session(engine) as session:
+        assert session.scalars(select(Article)).one().content.views == 2

@@ -10,6 +10,7 @@ from sqlalchemy_monetdb_adbc.types import (
     SECOND_INTERVAL,
     TINYINT,
     URL,
+    PydanticJSON,
 )
 
 try:
@@ -26,6 +27,7 @@ __all__ = [
     "TINYINT",
     "URL",
     "MonetDBADBCDialect",
+    "PydanticJSON",
     "__version__",
     "raw_adbc_connection",
 ]

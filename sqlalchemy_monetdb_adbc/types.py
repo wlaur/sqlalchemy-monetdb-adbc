@@ -3,11 +3,13 @@ from datetime import UTC
 from decimal import Decimal
 from typing import Any, cast
 
+from pydantic import BaseModel
 from sqlalchemy import types as sqltypes
 from sqlalchemy.engine.interfaces import Dialect
 from sqlalchemy.sql.type_api import (
     _BindProcessorType,  # pyright: ignore[reportPrivateUsage]
     _LiteralProcessorType,  # pyright: ignore[reportPrivateUsage]
+    _ResultProcessorType,  # pyright: ignore[reportPrivateUsage]
 )
 
 
@@ -151,3 +153,39 @@ MONETDB_TYPE_MAP: dict[str, type[sqltypes.TypeEngine[Any]]] = {
     "uuid": sqltypes.UUID,
     "varchar": sqltypes.VARCHAR,
 }
+
+
+class PydanticJSON[ModelT: BaseModel](sqltypes.TypeDecorator[ModelT]):
+    """Store a Pydantic model in a MonetDB JSON column.
+
+    The model is serialized straight to JSON text and parsed straight back with
+    ``model_validate_json``, so no intermediate ``dict`` is built in either
+    direction. That means overriding ``bind_processor``/``result_processor``
+    rather than ``process_bind_param``/``process_result_value``: the latter run
+    around the underlying :class:`~sqlalchemy.types.JSON` codecs instead of
+    replacing them, which would build the dict this type exists to avoid.
+
+    As for any JSON column, in-place mutation is not tracked; assign a new value
+    or use :mod:`sqlalchemy.ext.mutable`.
+    """
+
+    impl = MonetDBJSON
+    cache_ok = True
+
+    def __init__(self, model: type[ModelT], *args: Any, **kw: Any) -> None:
+        self.model = model
+        super().__init__(*args, **kw)
+
+    def bind_processor(self, dialect: Dialect) -> _BindProcessorType[ModelT]:
+        def process(value: ModelT | None) -> Any:
+            return None if value is None else value.model_dump_json()
+
+        return process
+
+    def result_processor(self, dialect: Dialect, coltype: Any) -> _ResultProcessorType[ModelT]:
+        model = self.model
+
+        def process(value: Any) -> ModelT | None:
+            return None if value is None else model.model_validate_json(value)
+
+        return process

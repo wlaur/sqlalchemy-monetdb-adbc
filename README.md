@@ -105,7 +105,123 @@ back. Note that a `str` is itself a valid JSON value, so passing pre-serialized
 text to a `JSON` column stores a JSON *string*, not an object:
 
 ```python
-connection.execute(insert(t), [{"payload": {"a": 1}}])    # stored as {"a":1}
+connection.execute(insert(t), [{"payload": {"a": 1}}])  # stored as {"a":1}
+connection.execute(insert(t), [{"payload": '{"a": 1}'}])  # stored as "{\"a\": 1}"
+```
+
+This is SQLAlchemy's behavior on every backend, not a MonetDB quirk. To store
+JSON text you already hold, use a `Text` column, or a type that controls the
+codec as below.
+
+### Storing a Pydantic model
+
+`PydanticJSON` stores a Pydantic model in a MonetDB `JSON` column. The model is
+serialized straight to JSON text and parsed straight back with
+`model_validate_json`, so no intermediate `dict` is built in either direction:
+
+```python
+from pydantic import BaseModel
+from sqlalchemy import Integer, select
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
+
+from sqlalchemy_monetdb_adbc import PydanticJSON
+
+
+class Content(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    title: str
+    views: int
+
+
+class Article(Base):
+    __tablename__ = "article"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    content: Mapped[Content] = mapped_column(PydanticJSON(Content))
+```
+
+The attribute is the model itself, with no conversion at the call site:
+
+```python
+article: Article = session.scalars(select(Article)).one()
+article.content.title  # Content instance, never a dict
+```
+
+Reading 1,000 documents of ~10 KB is 2.4x faster this way than deserializing to
+`dict` and validating afterwards (23.9 ms versus 58.2 ms). A plain `JSON` column
+cannot avoid the dict: by the time the attribute is read, SQLAlchemy has already
+deserialized and the original text is gone.
+
+#### Declare the model frozen
+
+As with any `JSON` column, SQLAlchemy does not track mutation *inside* the
+value, so an in-place edit is silently not persisted. Declaring the model
+`frozen=True`, as above, turns that silent loss into a `ValidationError`, and
+makes the model hashable. Persist a change by assigning a new value:
+
+```python
+article.content = article.content.model_copy(update={"views": 2})
+```
+
+Freezing is a property of your model, so the type cannot impose it; if you need
+mutation to be tracked instead, use `sqlalchemy.ext.mutable`.
+
+## Development installation
+
+```console
+uv add git+https://github.com/wlaur/sqlalchemy-monetdb-adbc
+```
+
+## Usage
+
+Existing SQLAlchemy MonetDB URLs work unchanged:
+
+```python
+from sqlalchemy import create_engine
+
+engine = create_engine(
+    "monetdb://monetdb:monetdb@localhost:50000/demo",
+)
+
+with engine.connect() as connection:
+    rows = connection.exec_driver_sql("SELECT 1").all()
+```
+
+The explicit `monetdb+adbc://` form resolves to the same dialect. Do not install
+`sqlalchemy-monetdb-adbc` and `sqlalchemy-monetdb` in the same environment: both
+packages register the bare `monetdb://` SQLAlchemy entry point.
+
+TLS URLs work with either the unchanged `monetdbs://` form or the explicit
+`monetdbs+adbc://` form. Both preserve the secure driver URI.
+
+The driver accepts the same URI query options after the database name:
+
+```python
+engine = create_engine(
+    "monetdb://monetdb:monetdb@localhost:50000/demo?client_application=my_app",
+)
+```
+
+## JSON
+
+A `JSON` column round-trips Python objects, as SQLAlchemy specifies: the driver
+returns the document as a string and SQLAlchemy deserializes it, honouring
+`json_serializer` and `json_deserializer` on `create_engine`.
+
+```python
+engine = create_engine("monetdb://...", json_deserializer=orjson.loads)
+```
+
+MonetDB validates and normalizes JSON on input, so a round-tripped document
+keeps its values but not its original whitespace or key order.
+
+Whatever Python object you store is serialized, and you get that same object
+back. Note that a `str` is itself a valid JSON value, so passing pre-serialized
+text to a `JSON` column stores a JSON *string*, not an object:
+
+```python
+connection.execute(insert(t), [{"payload": {"a": 1}}])  # stored as {"a":1}
 connection.execute(insert(t), [{"payload": '{"a": 1}'}])  # stored as "{\"a\": 1}"
 ```
 
