@@ -6,7 +6,21 @@ from alembic.autogenerate import produce_migrations, render_python_code
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from pydantic import BaseModel
-from sqlalchemy import JSON, Column, Engine, Integer, MetaData, String, Table, insert, inspect, select, text
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Column,
+    Engine,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    exc,
+    insert,
+    inspect,
+    select,
+    text,
+)
 
 from sqlalchemy_monetdb_adbc import PydanticJSON
 
@@ -37,7 +51,8 @@ def _autogenerate(engine: Engine, target: MetaData) -> str:
         context = MigrationContext.configure(connection)
         upgrade_ops = produce_migrations(context, target).upgrade_ops
         assert upgrade_ops is not None
-        return render_python_code(upgrade_ops)
+        # The migration context carries the dialect's render_type hook.
+        return render_python_code(upgrade_ops, migration_context=context)
 
 
 @pytest.fixture
@@ -78,15 +93,39 @@ def test_schema_operations(operations: tuple[Operations, Any], engine: Engine) -
     assert {column["name"] for column in inspector.get_columns("alb_renamed")} == {"id", "name"}
 
 
-def test_alter_column_type_reports_the_monetdb_limitation(operations: tuple[Operations, Any]) -> None:
+def test_alter_column_type(operations: tuple[Operations, Any], engine: Engine) -> None:
     op, connection = operations
-    op.create_table("alb_type", Column("id", Integer, primary_key=True), Column("name", String(20)))
+    op.create_table(
+        "alb_type",
+        Column("id", Integer, primary_key=True),
+        Column("name", String(20)),
+        Column("qty", Integer),
+    )
     connection.commit()
 
-    # MonetDB has no ALTER TABLE ... ALTER COLUMN ... TYPE, so this must say so
-    # rather than reaching the server and failing with a syntax error.
-    with pytest.raises(NotImplementedError, match="cannot change the type"):
-        op.alter_column("alb_type", "name", type_=String(50))
+    # MonetDB spells this "ALTER COLUMN <name> <type>", without TYPE.
+    op.alter_column("alb_type", "name", type_=String(50), existing_type=String(20))
+    op.alter_column("alb_type", "qty", type_=BigInteger(), existing_type=Integer())
+    connection.commit()
+
+    columns = {column["name"]: column["type"] for column in inspect(engine).get_columns("alb_type")}
+    assert isinstance(columns["name"], String)
+    assert columns["name"].length == 50
+    assert isinstance(columns["qty"], BigInteger)
+
+
+def test_alter_column_type_is_refused_for_a_depended_on_column(
+    operations: tuple[Operations, Any],
+) -> None:
+    op, connection = operations
+    op.create_table("alb_pk", Column("id", Integer, primary_key=True))
+    connection.commit()
+
+    # MonetDB will not alter a column that other objects depend on, such as a
+    # primary key. The error names the reason rather than being a syntax error.
+    with pytest.raises(exc.OperationalError, match="depend on it"):
+        op.alter_column("alb_pk", "id", type_=BigInteger(), existing_type=Integer())
+    connection.rollback()
 
 
 def test_autogenerate_detects_schema_differences(engine: Engine) -> None:
@@ -108,14 +147,29 @@ def test_autogenerate_detects_schema_differences(engine: Engine) -> None:
     assert code.count("op.add_column('ag_keep'") == 1
 
 
-def test_autogenerate_renders_pydantic_json_with_its_model(engine: Engine) -> None:
+def test_autogenerate_renders_pydantic_json_as_a_plain_json_column(engine: Engine) -> None:
     target = MetaData()
     Table("ag_pyd", target, Column("id", Integer, primary_key=True), Column("doc", PydanticJSON(Doc)))
 
     code = _autogenerate(engine, target)
 
-    # Without the model the generated migration would not run.
-    assert "PydanticJSON(Doc)" in code
+    # A migration describes the database schema. Rendering the model would make
+    # the migration import application code and break once that model moves.
+    assert "sa.JSON()" in code
+    assert "PydanticJSON" not in code
+    assert "Doc" not in code
+
+
+def test_autogenerate_sees_no_change_for_an_unchanged_pydantic_json_column(engine: Engine) -> None:
+    metadata = MetaData()
+    Table("ag_stable", metadata, Column("id", Integer, primary_key=True), Column("doc", PydanticJSON(Doc)))
+    metadata.create_all(engine)
+
+    # The column is already JSON in the database, so there is nothing to migrate.
+    code = _autogenerate(engine, metadata)
+
+    assert "op.add_column" not in code
+    assert "op.alter_column" not in code
 
 
 def test_migration_creates_a_usable_pydantic_json_column(operations: tuple[Operations, Any], engine: Engine) -> None:

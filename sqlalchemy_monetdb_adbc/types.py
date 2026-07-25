@@ -176,8 +176,6 @@ class PydanticJSON[ModelT: BaseModel](sqltypes.TypeDecorator[ModelT]):
         super().__init__(*args, **kw)
 
     def __repr__(self) -> str:
-        # Alembic renders a column type by repr, so the model has to appear or
-        # the generated migration will not run.
         return f"{type(self).__name__}({self.model.__name__})"
 
     def bind_processor(self, dialect: Dialect) -> _BindProcessorType[ModelT]:

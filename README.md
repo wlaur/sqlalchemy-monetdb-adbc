@@ -328,9 +328,17 @@ Importing the dialect registers a MonetDB migration implementation, so Alembic
 works without further configuration. Schema operations, autogenerate, and
 `PydanticJSON` columns are covered by the test suite.
 
-MonetDB has no `ALTER TABLE ... ALTER COLUMN ... TYPE`, so changing a column's
-type raises `NotImplementedError` rather than failing at the server. Add a new
-column, copy the values across, drop the old column, then rename the new one.
+No configuration is needed: importing the dialect, which `create_engine` does
+for you, registers the implementation. This works in offline mode too.
+
+Changing a column's type is supported. MonetDB spells it
+`ALTER TABLE t ALTER COLUMN c <type>`, without the `TYPE` keyword most backends
+use. It refuses to alter a column that other objects depend on, such as one
+carrying a primary key, and says so.
+
+A `PydanticJSON` column autogenerates as `sa.JSON()`, since a migration
+describes the database schema. Rendering the model instead would make
+migrations import application code and break as soon as that model moved.
 
 ## Development
 

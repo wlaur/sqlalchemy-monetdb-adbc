@@ -6,10 +6,20 @@ MonetDB. Alembic is not a runtime dependency, so ``dialect`` imports this module
 inside a ``try``.
 """
 
-from typing import Any
+from typing import Any, Literal, cast
 
+from alembic.ddl.base import (
+    ColumnType,
+    alter_column,
+    alter_table,
+    format_type,  # pyright: ignore[reportUnknownVariableType]
+)
 from alembic.ddl.impl import DefaultImpl
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.sql.compiler import DDLCompiler
 from sqlalchemy.sql.type_api import TypeEngine
+
+from sqlalchemy_monetdb_adbc.types import PydanticJSON
 
 
 class MonetDBImpl(DefaultImpl):
@@ -17,28 +27,15 @@ class MonetDBImpl(DefaultImpl):
 
     transactional_ddl = True
 
-    def alter_column(
-        self,
-        table_name: str,
-        column_name: str,
-        *,
-        type_: TypeEngine[Any] | None = None,
-        existing_type: TypeEngine[Any] | None = None,
-        **kw: Any,
-    ) -> None:
-        if type_ is not None:
-            # MonetDB has no ALTER TABLE ... ALTER COLUMN ... TYPE. Reaching the
-            # server would only produce a syntax error, so say what is wrong and
-            # what to do instead.
-            raise NotImplementedError(
-                f"MonetDB cannot change the type of an existing column "
-                f"({table_name}.{column_name} to {type_}). Add a new column, copy the "
-                f"values across, drop the old column, then rename the new one."
-            )
-
-        super().alter_column(  # pyright: ignore[reportUnknownMemberType]
-            table_name, column_name, type_=type_, existing_type=existing_type, **kw
-        )
+    def render_type(self, type_obj: Any, autogen_context: Any) -> str | Literal[False]:
+        # A migration describes the database schema, so a PydanticJSON column
+        # renders as the JSON column it actually is. Rendering the model would
+        # make migrations import application code and break as soon as that
+        # model is renamed or removed.
+        if isinstance(type_obj, PydanticJSON):
+            autogen_context.imports.add("import sqlalchemy as sa")
+            return "sa.JSON()"
+        return False
 
     def compare_server_default(
         self,
@@ -54,3 +51,18 @@ class MonetDBImpl(DefaultImpl):
         if rendered_metadata_default is not None:
             rendered_metadata_default = rendered_metadata_default.strip("'")
         return rendered_inspector_default != rendered_metadata_default
+
+
+@compiles(ColumnType, "monetdb")
+def _monetdb_column_type(  # pyright: ignore[reportUnusedFunction]
+    element: ColumnType,
+    compiler: DDLCompiler,
+    **kw: Any,  # noqa: ARG001
+) -> str:
+    # MonetDB spells this "ALTER COLUMN <name> <type>", without the TYPE keyword
+    # the default rendering emits.
+    table = alter_table(compiler, element.table_name, element.schema)
+    column = alter_column(compiler, element.column_name)
+    column_type = cast(TypeEngine[Any], element.type_)  # pyright: ignore[reportUnknownMemberType]
+    rendered = format_type(compiler, column_type)
+    return f"{table} {column} {rendered}"
