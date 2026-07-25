@@ -22,9 +22,11 @@ from sqlalchemy_monetdb_adbc.types import (
     INET,
     TINYINT,
     MonetDBBinary,
+    MonetDBFloat,
     MonetDBJSON,
     MonetDBJSONIndexType,
     MonetDBJSONPathType,
+    MonetDBTime,
 )
 from sqlalchemy_monetdb_adbc.types import URL as MONETDB_URL
 
@@ -69,11 +71,14 @@ class MonetDBADBCDialect(MonetDBReflection, default.DefaultDialect):
     insert_returning = True
     update_returning = True
     delete_returning = True
-    # executemany discards the RETURNING result set, so it cannot be used there.
-    # insert_executemany_returning is a memoized_property on DefaultDialect; a
-    # plain class attribute shadows it, which is how other dialects pin it too.
-    insert_executemany_returning: bool = False  # pyright: ignore[reportIncompatibleVariableOverride]
-    insert_executemany_returning_sort_by_parameter_order: bool = False  # pyright: ignore[reportIncompatibleVariableOverride]
+    # executemany discards the RETURNING result set, so insertmanyvalues is
+    # used instead: SQLAlchemy rewrites the INSERT to multiple VALUES clauses,
+    # which MonetDB does return rows for.
+    use_insertmanyvalues = True
+    # Only batch when RETURNING is actually needed: MonetDB rejects a multi-row
+    # INSERT whose rows reference each other through a self-referential foreign
+    # key, and plain executemany inserts them one statement at a time.
+    use_insertmanyvalues_wo_returning = False
     update_executemany_returning = False
     delete_executemany_returning = False
 
@@ -93,8 +98,10 @@ class MonetDBADBCDialect(MonetDBReflection, default.DefaultDialect):
     }
 
     colspecs: ClassVar[dict[type[sqltypes.TypeEngine[Any]], type[sqltypes.TypeEngine[Any]]]] = {  # pyright: ignore[reportIncompatibleVariableOverride]
+        sqltypes.Float: MonetDBFloat,
         sqltypes.JSON: MonetDBJSON,
         sqltypes.LargeBinary: MonetDBBinary,
+        sqltypes.Time: MonetDBTime,
         sqltypes.JSON.JSONPathType: MonetDBJSONPathType,
         sqltypes.JSON.JSONIndexType: MonetDBJSONIndexType,
     }

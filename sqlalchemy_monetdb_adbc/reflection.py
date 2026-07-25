@@ -185,7 +185,11 @@ class MonetDBReflection:
         schema: str | None = None,
         **kw: Any,
     ) -> bool:
-        return any(index["name"] == index_name for index in self.get_indexes(connection, table_name, schema, **kw))
+        try:
+            indexes = self.get_indexes(connection, table_name, schema, **kw)
+        except exc.NoSuchTableError:
+            return False
+        return any(index["name"] == index_name for index in indexes)
 
     def _resolve_type(self, type_name: str, digits: int, scale: int) -> sqltypes.TypeEngine[Any]:
         if type_name == "varchar" and digits == 0:

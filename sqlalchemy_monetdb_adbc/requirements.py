@@ -25,8 +25,9 @@ class Requirements(SuiteRequirements):
 
     @property
     def insert_executemany_returning(self) -> Any:
-        # executemany discards the RETURNING result set.
-        return exclusions.closed()
+        # Served by insertmanyvalues, which rewrites the INSERT into multiple
+        # VALUES clauses rather than using executemany.
+        return exclusions.open()
 
     @property
     def sequences(self) -> Any:

@@ -1,4 +1,6 @@
 from collections.abc import Sequence
+from datetime import UTC
+from decimal import Decimal
 from typing import Any, cast
 
 from sqlalchemy import types as sqltypes
@@ -64,6 +66,42 @@ class MonetDBBinary(sqltypes.LargeBinary):
             if value is None:
                 return None
             return bytes(value)
+
+        return process
+
+
+class MonetDBFloat(sqltypes.Float[Any]):
+    """FLOAT/DOUBLE binding that coerces Decimal to float.
+
+    ADBC infers the Arrow type of a bound column from its first value, so a
+    column mixing float and Decimal (which SQLAlchemy permits for a Float
+    column) fails inference. Coercing here keeps the column uniformly double.
+    """
+
+    def bind_processor(self, dialect: Dialect) -> _BindProcessorType[Any]:
+        def process(value: Any) -> Any:
+            if isinstance(value, Decimal):
+                return float(value)
+            return value
+
+        return process
+
+
+class MonetDBTime(sqltypes.Time):
+    """TIME WITH TIME ZONE result handling.
+
+    MonetDB normalizes timetz to UTC and Arrow's time64 carries no zone, so the
+    driver returns a naive time. Reattach UTC for a timezone-aware column.
+    """
+
+    def result_processor(self, dialect: Dialect, coltype: Any) -> Any:
+        if not self.timezone:
+            return None
+
+        def process(value: Any) -> Any:
+            if value is not None and value.tzinfo is None:
+                return value.replace(tzinfo=UTC)
+            return value
 
         return process
 
