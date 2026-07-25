@@ -14,9 +14,13 @@ and is validated against a live MonetDB server. It is not released to PyPI yet.
 
 ### Dialect compliance suite
 
-SQLAlchemy's own dialect suite runs from `suite/` (see Development). 1052 of its
+SQLAlchemy's own dialect suite runs from `suite/` (see Development). 1065 of its
 tests pass; the known failures are tracked and mostly cluster in reflection
-edge cases, `RETURNING` variants, CTEs, and numeric precision.
+edge cases, `RETURNING` variants, and numeric precision.
+
+Common table expressions are fully supported, including recursive CTEs, CTEs
+over `VALUES`, and CTEs driving `UPDATE`/`DELETE`. MonetDB's `WITH` accepts only
+`SELECT` or `VALUES`, so a CTE cannot itself be an `INSERT`/`UPDATE`/`DELETE`.
 
 Two behaviors are limited by `adbc-driver-monetdb` rather than by MonetDB, and
 are marked `DRIVER-WORKAROUND` in the source:
@@ -32,7 +36,17 @@ are marked `DRIVER-WORKAROUND` in the source:
   ordinary table names such as `users` and `columns`. Create and use a schema of
   your own.
 - Self-referential foreign keys are added by `ALTER TABLE` after the table
-  exists, because MonetDB cannot declare them inline.
+  exists, because MonetDB cannot declare them inline. MonetDB then enforces
+  them one statement at a time rather than at statement end, so on such a table
+  `DELETE FROM t` and `TRUNCATE t` are both rejected, and a multi-row `INSERT`
+  cannot reference a row added by the same statement. Declare the foreign key
+  with `ondelete="CASCADE"` if you need bulk deletes, or clear the referencing
+  column first:
+
+  ```python
+  connection.execute(update(tree).values(parent_id=None))
+  connection.execute(delete(tree))
+  ```
 - Indexes carry no ordering, so `ASC`/`DESC` on an index expression is dropped.
 - A `UNIQUE` constraint is backed by an index of the same name, so it is
   reflected both by `get_unique_constraints()` and by `get_indexes()`.

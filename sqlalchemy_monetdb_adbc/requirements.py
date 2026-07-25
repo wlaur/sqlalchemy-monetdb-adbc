@@ -160,6 +160,23 @@ class Requirements(SuiteRequirements):
         return exclusions.open()
 
     @property
+    def ctes_with_update_delete(self) -> Any:
+        return exclusions.open()
+
+    @property
+    def ctes_with_values(self) -> Any:
+        return exclusions.open()
+
+    @property
+    def ctes_on_dml(self) -> Any:
+        # MonetDB's WITH accepts only SELECT or VALUES, not INSERT/UPDATE/DELETE.
+        return exclusions.closed()
+
+    @property
+    def update_from(self) -> Any:
+        return exclusions.open()
+
+    @property
     def window_functions(self) -> Any:
         return exclusions.open()
 

@@ -24,11 +24,14 @@ from sqlalchemy import (
     Time,
     UniqueConstraint,
     Uuid,
+    delete,
     exc,
     insert,
     inspect,
+    literal,
     select,
     text,
+    update,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
@@ -240,3 +243,74 @@ def test_null_round_trip(engine: Engine) -> None:
     with engine.begin() as connection:
         connection.execute(insert(table), [{"id": 1, "value": None}])
         assert connection.execute(select(table.c.value)).scalar() is None
+
+
+def test_recursive_cte(engine: Engine) -> None:
+    metadata = MetaData()
+    table = Table(
+        "cte_tree",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("parent_id", Integer),
+        Column("name", String(20)),
+    )
+    metadata.create_all(engine)
+
+    with engine.begin() as connection:
+        connection.execute(
+            insert(table),
+            [
+                {"id": 1, "parent_id": None, "name": "root"},
+                {"id": 2, "parent_id": 1, "name": "a"},
+                {"id": 3, "parent_id": 2, "name": "a1"},
+            ],
+        )
+
+    base = select(table.c.id, literal(0).label("depth")).where(table.c.parent_id.is_(None)).cte("tree", recursive=True)
+    tree = base.union_all(select(table.c.id, base.c.depth + 1).join(base, table.c.parent_id == base.c.id))
+
+    with engine.connect() as connection:
+        rows = connection.execute(select(tree).order_by(tree.c.id)).all()
+
+    assert [(row[0], int(row[1])) for row in rows] == [(1, 0), (2, 1), (3, 2)]
+
+
+def test_cte_driving_delete(engine: Engine) -> None:
+    metadata = MetaData()
+    table = Table("cte_dml", metadata, Column("id", Integer), Column("keep", Integer))
+    metadata.create_all(engine)
+
+    with engine.begin() as connection:
+        connection.execute(insert(table), [{"id": 1, "keep": 1}, {"id": 2, "keep": 0}])
+        doomed = select(table.c.id).where(table.c.keep == 0).cte("doomed")
+        connection.execute(delete(table).where(table.c.id.in_(select(doomed.c.id))))
+        assert connection.execute(select(table.c.id)).scalars().all() == [1]
+
+
+def test_bulk_delete_on_self_referential_table(engine: Engine) -> None:
+    """MonetDB enforces a self-referential FK per statement, not at its end."""
+    metadata = MetaData()
+    table = Table(
+        "selfref_delete",
+        metadata,
+        Column("id", Integer, primary_key=True, autoincrement=False),
+        Column("parent_id", Integer, ForeignKey("selfref_delete.id")),
+    )
+    metadata.create_all(engine)
+
+    with engine.begin() as connection:
+        connection.execute(insert(table), [{"id": 1, "parent_id": None}])
+        connection.execute(insert(table), [{"id": 2, "parent_id": 1}])
+
+    with engine.connect() as connection:
+        transaction = connection.begin()
+        with pytest.raises(exc.IntegrityError):
+            connection.execute(delete(table))
+        # MonetDB aborts the transaction, so it can only be rolled back.
+        transaction.rollback()
+
+    # Clearing the referencing column first makes the delete legal.
+    with engine.begin() as connection:
+        connection.execute(update(table).values(parent_id=None))
+        connection.execute(delete(table))
+        assert connection.execute(select(table.c.id)).scalars().all() == []
