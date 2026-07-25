@@ -12,7 +12,7 @@ from collections.abc import Collection, Iterator, Sequence
 from typing import Any, cast
 
 from sqlalchemy import bindparam, text
-from sqlalchemy.engine import Connection, ObjectKind, ObjectScope
+from sqlalchemy.engine import Connection, ObjectKind, ObjectScope, reflection
 from sqlalchemy.engine.interfaces import (
     ReflectedCheckConstraint,
     ReflectedColumn,
@@ -42,21 +42,25 @@ class MonetDBMultiReflection:
     def _resolve_request(self, connection: Connection, kw: dict[str, Any]) -> tuple[str | None, dict[int, str]]:
         """Pull the reflection arguments SQLAlchemy passes and resolve the tables."""
         schema = cast(str | None, kw.get("schema"))
+        filter_names = cast("Collection[str] | None", kw.get("filter_names"))
         return schema, self._resolve_tables(
             connection,
             schema,
-            cast(Collection[str] | None, kw.get("filter_names")),
+            tuple(filter_names) if filter_names else None,
             cast(ObjectScope, kw.get("scope", ObjectScope.DEFAULT)),
             cast(ObjectKind, kw.get("kind", ObjectKind.TABLE)),
+            info_cache=kw.get("info_cache"),
         )
 
+    @reflection.cache
     def _resolve_tables(
         self,
         connection: Connection,
         schema: str | None,
-        filter_names: Collection[str] | None,
+        filter_names: tuple[str, ...] | None,
         scope: ObjectScope,
         kind: ObjectKind,
+        **kw: Any,
     ) -> dict[int, str]:
         """Map table id to table name for everything the caller asked about."""
         types: list[int] = []
