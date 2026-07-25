@@ -110,9 +110,13 @@ class MonetDBTypeCompiler(compiler.GenericTypeCompiler):
         return self.visit_TIMESTAMP(type_, **kw)
 
     def visit_TIME(self, type_: sqltypes.TypeEngine[Any], **kw: Any) -> str:  # noqa: N802
+        # A bare TIME is second-precision in MonetDB, unlike TIMESTAMP, so a
+        # SQLAlchemy Time would silently lose microseconds without this.
+        precision = getattr(type_, "precision", None)
+        rendered = f"TIME({6 if precision is None else precision})"
         if getattr(type_, "timezone", False):
-            return "TIME WITH TIME ZONE"
-        return "TIME"
+            return f"{rendered} WITH TIME ZONE"
+        return rendered
 
     def visit_uuid(self, type_: sqltypes.Uuid[Any], **kw: Any) -> str:
         if type_.native_uuid:

@@ -88,6 +88,30 @@ class MonetDBTime(sqltypes.Time):
         return process
 
 
+class MonetDBNumeric(sqltypes.Numeric[Any]):
+    """NUMERIC that returns Decimal even when MonetDB computed a double.
+
+    The driver returns a real Decimal for a DECIMAL column, so those pass
+    through untouched. MonetDB widens an expression to double when it cannot
+    infer a bound parameter's type, though, as in ``decimal_column + :value``;
+    the precision is already gone server-side, but SQLAlchemy's contract still
+    says a Numeric column yields Decimal.
+    """
+
+    def result_processor(self, dialect: Dialect, coltype: Any) -> _ResultProcessorType[Any] | None:
+        if not self.asdecimal:
+            return None
+
+        scale = self._effective_decimal_return_scale
+
+        def process(value: Any) -> Any:
+            if isinstance(value, float):
+                return Decimal(f"%.{scale}f" % value)
+            return value
+
+        return process
+
+
 class MonetDBJSON(sqltypes.JSON):
     """MonetDB JSON.
 

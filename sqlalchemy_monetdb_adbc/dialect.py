@@ -26,6 +26,7 @@ from sqlalchemy_monetdb_adbc.types import (
     MonetDBJSON,
     MonetDBJSONIndexType,
     MonetDBJSONPathType,
+    MonetDBNumeric,
     MonetDBTime,
 )
 from sqlalchemy_monetdb_adbc.types import URL as MONETDB_URL
@@ -99,6 +100,7 @@ class MonetDBADBCDialect(MonetDBReflection, default.DefaultDialect):
 
     colspecs: ClassVar[dict[type[sqltypes.TypeEngine[Any]], type[sqltypes.TypeEngine[Any]]]] = {  # pyright: ignore[reportIncompatibleVariableOverride]
         sqltypes.Float: MonetDBFloat,
+        sqltypes.Numeric: MonetDBNumeric,
         sqltypes.JSON: MonetDBJSON,
         sqltypes.Time: MonetDBTime,
         sqltypes.JSON.JSONPathType: MonetDBJSONPathType,
