@@ -87,6 +87,56 @@ engine = create_engine(
 )
 ```
 
+## JSON
+
+A `JSON` column round-trips Python objects, as SQLAlchemy specifies: the driver
+returns the document as a string and SQLAlchemy deserializes it, honouring
+`json_serializer` and `json_deserializer` on `create_engine`.
+
+```python
+engine = create_engine("monetdb://...", json_deserializer=orjson.loads)
+```
+
+MonetDB validates and normalizes JSON on input, so a round-tripped document
+keeps its values but not its original whitespace or key order.
+
+### Parsing straight into a model
+
+Because the driver hands back the raw JSON text, a type can skip the
+intermediate dict entirely and hand that text to a parser that reads JSON
+directly, such as `pydantic.BaseModel.model_validate_json`. Override
+`bind_processor`/`result_processor` rather than
+`process_bind_param`/`process_result_value`, so the underlying `JSON` codecs
+never run:
+
+```python
+class PydanticJSON(TypeDecorator):
+    impl = JSON
+    cache_ok = True
+
+    def __init__(self, model, *args, **kw):
+        self.model = model
+        super().__init__(*args, **kw)
+
+    def bind_processor(self, dialect):
+        def process(value):
+            return None if value is None else value.model_dump_json()
+
+        return process
+
+    def result_processor(self, dialect, coltype):
+        model = self.model
+
+        def process(value):
+            return None if value is None else model.model_validate_json(value)
+
+        return process
+```
+
+The column is still `JSON` in MonetDB. Reading 1,000 documents of ~10 KB was
+2.4x faster this way than deserializing to `dict` and validating afterwards
+(23.9 ms versus 58.2 ms).
+
 ## Development
 
 Python 3.13 or newer and `uv` are required.
