@@ -146,9 +146,35 @@ class PydanticJSON(TypeDecorator):
         return process
 ```
 
+Map it and the attribute is already the model, with no conversion at the call
+site:
+
+```python
+class Article(Base):
+    __tablename__ = "article"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    content: Mapped[Content] = mapped_column(PydanticJSON(Content))
+
+
+article = session.scalars(select(Article)).one()
+article.content.title  # Content instance, never a dict
+```
+
 The column is still `JSON` in MonetDB. Reading 1,000 documents of ~10 KB was
 2.4x faster this way than deserializing to `dict` and validating afterwards
 (23.9 ms versus 58.2 ms).
+
+A plain `JSON` column cannot avoid the dict: by the time the attribute is read,
+SQLAlchemy has already deserialized and the original text is gone. The type has
+to produce the model.
+
+As with any `JSON` column, in-place mutation is not tracked. Assign a new value
+to persist a change, or use `sqlalchemy.ext.mutable`:
+
+```python
+article.content = article.content.model_copy(update={"views": 2})
+```
 
 ## Development
 
