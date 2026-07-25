@@ -14,21 +14,33 @@ and is validated against a live MonetDB server. It is not released to PyPI yet.
 
 ### Dialect compliance suite
 
-SQLAlchemy's own dialect suite runs from `suite/` (see Development). 1127 of its
-tests pass; the known failures cluster in multi-table reflection
-(`get_multi_*`), and in a few places where MonetDB will not infer a type for a
-bare parameter, such as `WHERE ? = ?` or `LIMIT 1 + 2`.
+SQLAlchemy's own dialect suite runs from `suite/` (see Development). 1232 of
+its 1253 applicable tests pass. Every remaining failure is a MonetDB
+limitation rather than a gap in the dialect:
+
+- MonetDB infers no type for a bare parameter, so `WHERE ? = ?` and `? / ?`
+  are rejected. A cast resolves it, but SQLAlchemy emits the parameter alone.
+  This is most of the remainder.
+- No lastrowid, which is why generated values come back through `RETURNING`.
+- `RETURNING *` needs an explicit column list.
+- JSON is normalized on input, so a document does not round-trip byte for byte.
+- Some identifiers legal elsewhere are rejected, such as one containing `%`.
 
 Common table expressions are fully supported, including recursive CTEs, CTEs
 over `VALUES`, and CTEs driving `UPDATE`/`DELETE`. MonetDB's `WITH` accepts only
 `SELECT` or `VALUES`, so a CTE cannot itself be an `INSERT`/`UPDATE`/`DELETE`.
 
-The dialect requires `adbc-driver-monetdb` 0.8.2 or newer, which reports
-truthful row counts and exports the PEP 249 `Binary` constructor. One
-`DRIVER-WORKAROUND` remains in the source, for an upstream Apache arrow-adbc
-behavior: ADBC always returns an Arrow stream, so the DB-API layer reports an
-empty `description` rather than `None` for statements that produce no result
-set, and SQLAlchemy needs `None` to decide that a statement returned no rows.
+Regular expression matching is not available: MonetDB's `~` is `mbr_contains`,
+a geometry operator, so `regexp_match()` raises rather than producing SQL that
+means something else. `regexp_replace()` works.
+
+The dialect requires `adbc-driver-monetdb` 0.8.3 or newer, which reports
+truthful row counts, exports the PEP 249 `Binary` constructor, and caches
+prepared statements per connection. One `DRIVER-WORKAROUND` remains in the
+source, for an upstream Apache arrow-adbc behavior: ADBC always returns an
+Arrow stream, so the DB-API layer reports an empty `description` rather than
+`None` for statements that produce no result set, and SQLAlchemy needs `None`
+to decide that a statement returned no rows.
 
 ### MonetDB behaviors worth knowing
 
