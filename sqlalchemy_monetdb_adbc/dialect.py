@@ -1,3 +1,4 @@
+import contextlib
 from collections.abc import Callable
 from typing import Any, ClassVar, cast
 
@@ -28,6 +29,10 @@ from sqlalchemy_monetdb_adbc.types import (
     MonetDBTime,
 )
 from sqlalchemy_monetdb_adbc.types import URL as MONETDB_URL
+
+with contextlib.suppress(ImportError):
+    # Alembic is optional; importing registers the MonetDB migration impl.
+    from sqlalchemy_monetdb_adbc import _alembic  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
 SECURE_BACKEND_NAMES = frozenset({"monetdbs"})
 

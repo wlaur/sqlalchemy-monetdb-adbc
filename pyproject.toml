@@ -31,6 +31,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "alembic>=1.14",
     "pyright",
     "pytest>=9",
     "ruff",

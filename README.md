@@ -105,10 +105,10 @@ and the `as_string()`/`as_integer()` accessors. A path that matches nothing
 returns `None`:
 
 ```python
-select(t.c.doc["title"])          # 'hello'
-select(t.c.doc[("sub", "k")])     # 'v'
-select(t.c.doc[("arr", 1)])       # 20
-select(t.c.doc["missing"])        # None
+select(t.c.doc["title"])  # 'hello'
+select(t.c.doc[("sub", "k")])  # 'v'
+select(t.c.doc[("arr", 1)])  # 20
+select(t.c.doc["missing"])  # None
 ```
 
 Whatever Python object you store is serialized, and you get that same object
@@ -232,10 +232,10 @@ and the `as_string()`/`as_integer()` accessors. A path that matches nothing
 returns `None`:
 
 ```python
-select(t.c.doc["title"])          # 'hello'
-select(t.c.doc[("sub", "k")])     # 'v'
-select(t.c.doc[("arr", 1)])       # 20
-select(t.c.doc["missing"])        # None
+select(t.c.doc["title"])  # 'hello'
+select(t.c.doc[("sub", "k")])  # 'v'
+select(t.c.doc[("arr", 1)])  # 20
+select(t.c.doc["missing"])  # None
 ```
 
 Whatever Python object you store is serialized, and you get that same object
@@ -321,6 +321,16 @@ to persist a change, or use `sqlalchemy.ext.mutable`:
 ```python
 article.content = article.content.model_copy(update={"views": 2})
 ```
+
+## Alembic
+
+Importing the dialect registers a MonetDB migration implementation, so Alembic
+works without further configuration. Schema operations, autogenerate, and
+`PydanticJSON` columns are covered by the test suite.
+
+MonetDB has no `ALTER TABLE ... ALTER COLUMN ... TYPE`, so changing a column's
+type raises `NotImplementedError` rather than failing at the server. Add a new
+column, copy the values across, drop the old column, then rename the new one.
 
 ## Development
 
