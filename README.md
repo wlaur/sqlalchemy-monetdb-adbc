@@ -115,6 +115,9 @@ codec as below.
 
 ### Parsing straight into a model
 
+This package does not ship a Pydantic type, so as not to depend on Pydantic.
+The following is a recipe to copy into your own code.
+
 Because the driver hands back the raw JSON text, a type can skip the
 intermediate dict entirely and hand that text to a parser that reads JSON
 directly, such as `pydantic.BaseModel.model_validate_json`. Override
@@ -123,7 +126,12 @@ directly, such as `pydantic.BaseModel.model_validate_json`. Override
 never run:
 
 ```python
+from sqlalchemy import JSON, TypeDecorator
+
+
 class PydanticJSON(TypeDecorator):
+    """Store a Pydantic model in a JSON column, without an intermediate dict."""
+
     impl = JSON
     cache_ok = True
 
@@ -146,8 +154,8 @@ class PydanticJSON(TypeDecorator):
         return process
 ```
 
-Map it and the attribute is already the model, with no conversion at the call
-site:
+Map that type and the attribute is already the model, with no conversion at
+the call site:
 
 ```python
 class Article(Base):
