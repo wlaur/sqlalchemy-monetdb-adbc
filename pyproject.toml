@@ -87,6 +87,8 @@ include = ["sqlalchemy_monetdb_adbc", "tests"]
 venvPath = "."
 venv = ".venv"
 typeCheckingMode = "strict"
+# pyarrow ships no type stubs; the Arrow helpers are typed against it anyway.
+reportMissingTypeStubs = false
 reportUnnecessaryTypeIgnoreComment = "error"
 useLibraryCodeForTypes = true
 enableTypeIgnoreComments = false

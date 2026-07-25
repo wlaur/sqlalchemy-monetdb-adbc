@@ -39,7 +39,13 @@ from sqlalchemy import (
 from sqlalchemy.exc import SAWarning
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
-from sqlalchemy_monetdb_adbc import PydanticJSON, raw_adbc_connection
+from sqlalchemy_monetdb_adbc import (
+    PydanticJSON,
+    fetch_arrow_table,
+    fetch_record_batches,
+    ingest_arrow,
+    raw_adbc_connection,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -515,3 +521,44 @@ def test_pydantic_json_reports_schema_drift(engine: Engine) -> None:
     # Stored JSON that no longer matches the model must fail loudly.
     with engine.connect() as connection, pytest.raises(ValidationError):
         connection.execute(select(table.c.doc)).scalar()
+
+
+def test_arrow_helpers_run_on_the_sqlalchemy_transaction(engine: Engine) -> None:
+    import pyarrow as pa
+
+    metadata = MetaData()
+    table = Table("arrow_helpers", metadata, Column("id", Integer), Column("sym", String(10)))
+    metadata.create_all(engine)
+
+    with Session(engine) as session:
+        session.execute(insert(table), [{"id": i, "sym": ("AAPL", "MSFT")[i % 2]} for i in range(100)])
+
+        # A SQLAlchemy Select is compiled for us, bind parameters included.
+        statement = select(table.c.id, table.c.sym).where(table.c.sym == "AAPL").order_by(table.c.id)
+
+        arrow_table = fetch_arrow_table(session.connection(), statement)
+        assert isinstance(arrow_table, pa.Table)
+        assert arrow_table.num_rows == 50
+        assert arrow_table.schema.names == ["id", "sym"]
+
+        with fetch_record_batches(session.connection(), statement) as reader:
+            assert sum(batch.num_rows for batch in reader) == 50
+
+        assert ingest_arrow(session.connection(), "arrow_helpers", arrow_table, mode="append") == 50
+        # The ingest joined the same uncommitted transaction.
+        assert len(session.execute(select(table)).all()) == 150
+
+        session.rollback()
+
+    with engine.connect() as connection:
+        assert connection.execute(select(table)).all() == []
+
+
+def test_arrow_helpers_accept_raw_sql(engine: Engine) -> None:
+    metadata = MetaData()
+    table = Table("arrow_raw", metadata, Column("id", Integer))
+    metadata.create_all(engine)
+
+    with engine.begin() as connection:
+        connection.execute(insert(table), [{"id": i} for i in range(10)])
+        assert fetch_arrow_table(connection, "SELECT id FROM arrow_raw").num_rows == 10
