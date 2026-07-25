@@ -100,6 +100,19 @@ engine = create_engine("monetdb://...", json_deserializer=orjson.loads)
 MonetDB validates and normalizes JSON on input, so a round-tripped document
 keeps its values but not its original whitespace or key order.
 
+Whatever Python object you store is serialized, and you get that same object
+back. Note that a `str` is itself a valid JSON value, so passing pre-serialized
+text to a `JSON` column stores a JSON *string*, not an object:
+
+```python
+connection.execute(insert(t), [{"payload": {"a": 1}}])    # stored as {"a":1}
+connection.execute(insert(t), [{"payload": '{"a": 1}'}])  # stored as "{\"a\": 1}"
+```
+
+This is SQLAlchemy's behavior on every backend, not a MonetDB quirk. To store
+JSON text you already hold, use a `Text` column, or a type that controls the
+codec as below.
+
 ### Parsing straight into a model
 
 Because the driver hands back the raw JSON text, a type can skip the
