@@ -16,6 +16,7 @@ from sqlalchemy.sql import sqltypes
 
 from sqlalchemy_monetdb_adbc.base import MonetDBExecutionContext, MonetDBIdentifierPreparer
 from sqlalchemy_monetdb_adbc.compiler import MonetDBCompiler, MonetDBDDLCompiler, MonetDBTypeCompiler
+from sqlalchemy_monetdb_adbc.multi_reflection import MonetDBMultiReflection
 from sqlalchemy_monetdb_adbc.reflection import MonetDBReflection
 from sqlalchemy_monetdb_adbc.types import (
     DOUBLE_PRECISION,
@@ -40,7 +41,11 @@ SECURE_BACKEND_NAMES = frozenset({"monetdbs"})
 AUTOCOMMIT_OPTION = "adbc.connection.autocommit"
 
 
-class MonetDBADBCDialect(MonetDBReflection, default.DefaultDialect):
+class MonetDBADBCDialect(  # pyright: ignore[reportIncompatibleMethodOverride]
+    MonetDBMultiReflection,
+    MonetDBReflection,
+    default.DefaultDialect,
+):
     name = "monetdb"
     driver = "adbc"
 

@@ -1,4 +1,3 @@
-import re
 from collections import defaultdict
 from collections.abc import Callable
 from typing import Any, cast
@@ -16,29 +15,42 @@ from sqlalchemy.engine.interfaces import (
 )
 from sqlalchemy.sql import sqltypes
 
+from sqlalchemy_monetdb_adbc.constants import (
+    AUTOINCREMENT_DEFAULT,
+    FK_ACTIONS,
+    KEY_TYPE_CHECK,
+    KEY_TYPE_PRIMARY,
+    KEY_TYPE_UNIQUE,
+    TABLE_TYPE_LOCAL_TEMPORARY,
+    TABLE_TYPE_MERGE,
+    TABLE_TYPE_REMOTE,
+    TABLE_TYPE_REPLICA,
+    TABLE_TYPE_TABLE,
+    TABLE_TYPE_VIEW,
+)
 from sqlalchemy_monetdb_adbc.types import MONETDB_TYPE_MAP
 
-AUTOINCREMENT_DEFAULT = re.compile(r'^next value for "(?P<schema>[^"]+)"\."(?P<sequence>[^"]+)"$')
 
-TABLE_TYPE_TABLE = 0
-TABLE_TYPE_VIEW = 1
-TABLE_TYPE_MERGE = 3
-TABLE_TYPE_REMOTE = 5
-TABLE_TYPE_REPLICA = 6
-TABLE_TYPE_LOCAL_TEMPORARY = 30
+def resolve_type(type_name: str, digits: int, scale: int) -> sqltypes.TypeEngine[Any]:
+    if type_name == "varchar" and digits == 0:
+        return sqltypes.TEXT()
 
-KEY_TYPE_PRIMARY = 0
-KEY_TYPE_UNIQUE = 1
-KEY_TYPE_FOREIGN = 2
-KEY_TYPE_CHECK = 4
+    impl = MONETDB_TYPE_MAP.get(type_name)
+    if impl is None:
+        raise exc.InvalidRequestError(f"unknown MonetDB type: {type_name}")
 
-FK_ACTIONS = {
-    0: "NO ACTION",
-    1: "CASCADE",
-    2: "RESTRICT",
-    3: "SET NULL",
-    4: "SET DEFAULT",
-}
+    if type_name == "timestamptz":
+        return sqltypes.TIMESTAMP(timezone=True)
+    if type_name == "timetz":
+        return sqltypes.TIME(timezone=True)
+
+    constructor = cast(Callable[..., sqltypes.TypeEngine[Any]], impl)
+    if type_name in {"char", "varchar"}:
+        return constructor(digits)
+    if type_name == "decimal":
+        return constructor(digits, scale)
+
+    return constructor()
 
 
 class MonetDBReflection:
@@ -116,6 +128,10 @@ class MonetDBReflection:
 
     @reflection.cache
     def get_temp_table_names(self, connection: Connection, schema: str | None = None, **kw: Any) -> list[str]:
+        if schema is not None:
+            # Temporary tables live in "tmp" and belong to no user schema.
+            return []
+
         query = text(
             "SELECT name FROM sys.tables "
             "WHERE type = :type AND schema_id = (SELECT id FROM sys.schemas WHERE name = 'tmp') "
@@ -192,25 +208,7 @@ class MonetDBReflection:
         return any(index["name"] == index_name for index in indexes)
 
     def _resolve_type(self, type_name: str, digits: int, scale: int) -> sqltypes.TypeEngine[Any]:
-        if type_name == "varchar" and digits == 0:
-            return sqltypes.TEXT()
-
-        impl = MONETDB_TYPE_MAP.get(type_name)
-        if impl is None:
-            raise exc.InvalidRequestError(f"unknown MonetDB type: {type_name}")
-
-        if type_name == "timestamptz":
-            return sqltypes.TIMESTAMP(timezone=True)
-        if type_name == "timetz":
-            return sqltypes.TIME(timezone=True)
-
-        constructor = cast(Callable[..., sqltypes.TypeEngine[Any]], impl)
-        if type_name in {"char", "varchar"}:
-            return constructor(digits)
-        if type_name == "decimal":
-            return constructor(digits, scale)
-
-        return constructor()
+        return resolve_type(type_name, digits, scale)
 
     @reflection.cache
     def get_columns(

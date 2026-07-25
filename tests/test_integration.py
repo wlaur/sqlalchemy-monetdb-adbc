@@ -562,3 +562,75 @@ def test_arrow_helpers_accept_raw_sql(engine: Engine) -> None:
     with engine.begin() as connection:
         connection.execute(insert(table), [{"id": i} for i in range(10)])
         assert fetch_arrow_table(connection, "SELECT id FROM arrow_raw").num_rows == 10
+
+
+def test_batched_reflection_matches_per_table_reflection(engine: Engine) -> None:
+    metadata = MetaData()
+    Table(
+        "batch_parent",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("code", String(10)),
+        UniqueConstraint("code"),
+    )
+    Table(
+        "batch_child",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("parent_id", Integer, ForeignKey("batch_parent.id")),
+        Column("qty", Integer),
+        CheckConstraint("qty > 0", name="batch_qty_positive"),
+        comment="a child table",
+    )
+    metadata.create_all(engine)
+
+    inspector = inspect(engine)
+    names = ["batch_parent", "batch_child"]
+
+    def normalize(value: Any) -> Any:
+        # Reflected types are fresh instances, so compare their rendering.
+        if isinstance(value, list):
+            return [normalize(item) for item in value]
+        if isinstance(value, dict):
+            return {key: str(item) if key == "type" else normalize(item) for key, item in value.items()}
+        return value
+
+    for name in names:
+        key = (None, name)
+        assert normalize(inspector.get_multi_columns(filter_names=names)[key]) == normalize(inspector.get_columns(name))
+        assert inspector.get_multi_pk_constraint(filter_names=names)[key] == inspector.get_pk_constraint(name)
+        assert inspector.get_multi_foreign_keys(filter_names=names)[key] == inspector.get_foreign_keys(name)
+        assert inspector.get_multi_indexes(filter_names=names)[key] == inspector.get_indexes(name)
+        assert inspector.get_multi_unique_constraints(filter_names=names)[key] == inspector.get_unique_constraints(name)
+        assert inspector.get_multi_check_constraints(filter_names=names)[key] == inspector.get_check_constraints(name)
+        assert inspector.get_multi_table_comment(filter_names=names)[key] == inspector.get_table_comment(name)
+
+
+def test_batched_reflection_issues_few_statements(engine: Engine) -> None:
+    import logging
+
+    metadata = MetaData()
+    for index in range(10):
+        Table(f"batch_perf_{index}", metadata, Column("id", Integer, primary_key=True), Column("a", String(10)))
+    metadata.create_all(engine)
+
+    records: list[logging.LogRecord] = []
+
+    class Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    logger = logging.getLogger("sqlalchemy.engine.Engine")
+    handler = Capture()
+    previous = logger.level
+    logger.setLevel(logging.INFO)
+    logger.addHandler(handler)
+    try:
+        MetaData().reflect(engine)
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(previous)
+
+    statements = sum(1 for record in records if str(record.msg).lstrip().startswith(("SELECT", "WITH")))
+    # One query per reflected kind, not per table; the per-table loop took 20x this.
+    assert statements < 40, f"reflection issued {statements} statements"
