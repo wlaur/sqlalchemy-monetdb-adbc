@@ -23,12 +23,15 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "adbc-driver-monetdb>=0.8.0",
+    "adbc-driver-monetdb>=0.8.3",
+    "pydantic>=2",
+    "pyarrow>=25",
     "sqlalchemy>=2.0.34",
 ]
 
 [dependency-groups]
 dev = [
+    "alembic>=1.14",
     "pyright",
     "pytest>=9",
     "ruff",
@@ -71,7 +74,10 @@ lint.select = [
     "FLY",
     "RUF",
 ]
-lint.ignore = ["ISC001"]
+# ANN401/ARG002: SQLAlchemy's dialect, compiler and reflection APIs are defined
+# with untyped `**kw` and pass arguments that individual hooks ignore. Both are
+# fixed by the framework, not by this package.
+lint.ignore = ["ANN401", "ARG002", "ISC001"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10
@@ -81,6 +87,8 @@ include = ["sqlalchemy_monetdb_adbc", "tests"]
 venvPath = "."
 venv = ".venv"
 typeCheckingMode = "strict"
+# pyarrow ships no type stubs; the Arrow helpers are typed against it anyway.
+reportMissingTypeStubs = false
 reportUnnecessaryTypeIgnoreComment = "error"
 useLibraryCodeForTypes = true
 enableTypeIgnoreComments = false
@@ -94,3 +102,12 @@ testpaths = ["tests"]
 markers = [
     "integration: requires a running MonetDB server (set MONETDB_TEST_URI)",
 ]
+
+# pyarrow ships no type stubs; the dialect itself does not import it, but the
+# integration tests exercise the Arrow-native path.
+[[tool.pyright.executionEnvironments]]
+root = "tests"
+reportMissingTypeStubs = false
+reportUnknownMemberType = false
+reportUnknownVariableType = false
+reportUnknownArgumentType = false
