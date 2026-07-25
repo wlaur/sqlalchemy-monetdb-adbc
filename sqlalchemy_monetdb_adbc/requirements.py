@@ -46,6 +46,15 @@ class Requirements(SuiteRequirements):
         return exclusions.open()
 
     @property
+    def temp_table_names(self) -> Any:
+        return exclusions.open()
+
+    @property
+    def temporary_views(self) -> Any:
+        # MonetDB has no temporary views.
+        return exclusions.closed()
+
+    @property
     def temporary_tables(self) -> Any:
         return exclusions.open()
 
@@ -70,11 +79,16 @@ class Requirements(SuiteRequirements):
         return exclusions.open()
 
     @property
+    def unique_index_reflect_as_unique_constraints(self) -> Any:
+        # MonetDB has no CREATE UNIQUE INDEX, so a unique Index is compiled to a
+        # UNIQUE constraint and is then reported as one.
+        return exclusions.open()
+
+    @property
     def unique_constraints_reflect_as_index(self) -> Any:
-        # MonetDB backs a UNIQUE constraint with an index of the same name, and
-        # compiles a unique Index into a UNIQUE constraint, so the two are
-        # indistinguishable in the catalog. get_indexes() reports both.
-        return exclusions.closed()
+        # MonetDB backs a UNIQUE constraint with an index of the same name, so
+        # get_indexes() reports it as well.
+        return exclusions.open()
 
     @property
     def foreign_keys_reflect_as_index(self) -> Any:
