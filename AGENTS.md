@@ -15,8 +15,9 @@ here.
 
 ## Connection and transaction boundaries
 
-- `monetdb://` and `monetdb+adbc://` must create one ADBC DBAPI connection per
-  SQLAlchemy connection.
+- `monetdb://`, `monetdb+adbc://`, `monetdbs://`, and `monetdbs+adbc://` must
+  create one ADBC DBAPI connection per SQLAlchemy connection. The secure schemes must
+  remain secure when translated to driver URIs.
 - DDL, SQL execution, Arrow reads, and `adbc_ingest` participating in one unit of work
   must use that same physical connection. Do not introduce a second MonetDB session.
 - Preserve SQLAlchemy's transaction contract while exposing a documented way to reach
@@ -36,8 +37,8 @@ here.
 ## Packaging
 
 - The distribution is `sqlalchemy-monetdb-adbc`, the import package is
-  `sqlalchemy_monetdb_adbc`, and the SQLAlchemy entry points are `monetdb` and
-  `monetdb.adbc`.
+  `sqlalchemy_monetdb_adbc`, and the SQLAlchemy entry points are `monetdb`,
+  `monetdb.adbc`, `monetdbs`, and `monetdbs.adbc`.
 - Do not install this package alongside `sqlalchemy-monetdb`; both distributions
   register the bare `monetdb` entry point.
 - Build both wheel and sdist with `uv build` and smoke-test the built wheel outside the

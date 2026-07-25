@@ -10,16 +10,22 @@ from sqlalchemy_monetdb_adbc import MonetDBADBCDialect
 def test_entry_point_loads_dialect() -> None:
     assert registry.load("monetdb") is MonetDBADBCDialect
     assert registry.load("monetdb.adbc") is MonetDBADBCDialect
+    assert registry.load("monetdbs") is MonetDBADBCDialect
+    assert registry.load("monetdbs.adbc") is MonetDBADBCDialect
 
 
 def test_create_engine_loads_dialect_without_connecting() -> None:
-    implicit_engine = create_engine("monetdb://monetdb:secret@localhost:50000/demo")
-    explicit_engine = create_engine("monetdb+adbc://monetdb:secret@localhost:50000/demo")
+    urls = (
+        "monetdb://monetdb:secret@localhost:50000/demo",
+        "monetdb+adbc://monetdb:secret@localhost:50000/demo",
+        "monetdbs://monetdb:secret@localhost:50000/demo",
+        "monetdbs+adbc://monetdb:secret@localhost:50000/demo",
+    )
 
-    assert isinstance(implicit_engine.dialect, MonetDBADBCDialect)
-    assert isinstance(explicit_engine.dialect, MonetDBADBCDialect)
-    implicit_engine.dispose()
-    explicit_engine.dispose()
+    for url in urls:
+        engine = create_engine(url)
+        assert isinstance(engine.dialect, MonetDBADBCDialect)
+        engine.dispose()
 
 
 def test_import_dbapi_loads_monetdb_adbc_driver() -> None:
@@ -40,4 +46,13 @@ def test_create_connect_args_translates_sqlalchemy_scheme() -> None:
     assert args == (
         "monetdb://monetdb:secret@localhost:50000/demo?client_application=sqlalchemy-monetdb-adbc&read_timeout=30",
     )
+    assert kwargs == {}
+
+
+def test_create_connect_args_preserves_tls_scheme() -> None:
+    url = make_url("monetdbs+adbc://monetdb:secret@localhost:50000/demo")
+
+    args, kwargs = MonetDBADBCDialect().create_connect_args(url)
+
+    assert args == ("monetdbs://monetdb:secret@localhost:50000/demo",)
     assert kwargs == {}

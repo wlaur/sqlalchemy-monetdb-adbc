@@ -20,5 +20,5 @@ class MonetDBADBCDialect(DefaultDialect):
         return cast(DBAPIModule, dbapi)
 
     def create_connect_args(self, url: URL) -> tuple[tuple[str], dict[str, object]]:
-        driver_url = url.set(drivername="monetdb")
+        driver_url = url.set(drivername=url.get_backend_name())
         return (driver_url.render_as_string(hide_password=False),), {}

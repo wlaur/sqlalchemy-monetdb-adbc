@@ -37,6 +37,8 @@ dev = [
 [project.entry-points."sqlalchemy.dialects"]
 "monetdb" = "sqlalchemy_monetdb_adbc.dialect:MonetDBADBCDialect"
 "monetdb.adbc" = "sqlalchemy_monetdb_adbc.dialect:MonetDBADBCDialect"
+"monetdbs" = "sqlalchemy_monetdb_adbc.dialect:MonetDBADBCDialect"
+"monetdbs.adbc" = "sqlalchemy_monetdb_adbc.dialect:MonetDBADBCDialect"
 
 [project.urls]
 Homepage = "https://github.com/wlaur/sqlalchemy-monetdb-adbc"

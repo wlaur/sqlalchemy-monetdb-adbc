@@ -38,6 +38,9 @@ The explicit `monetdb+adbc://` form resolves to the same dialect. Do not install
 `sqlalchemy-monetdb-adbc` and `sqlalchemy-monetdb` in the same environment: both
 packages register the bare `monetdb://` SQLAlchemy entry point.
 
+TLS URLs work with either the unchanged `monetdbs://` form or the explicit
+`monetdbs+adbc://` form. Both preserve the secure driver URI.
+
 The driver accepts the same URI query options after the database name:
 
 ```python
