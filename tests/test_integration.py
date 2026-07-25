@@ -454,3 +454,25 @@ def test_pydantic_json_orm_attribute_is_the_model(engine: Engine) -> None:
 
     with Session(engine) as session:
         assert session.scalars(select(Article)).one().content.views == 2
+
+
+class _EmptyDoc(BaseModel):
+    """Serializes to ``{}``, which is falsy."""
+
+
+def test_pydantic_json_distinguishes_an_empty_model_from_null(engine: Engine) -> None:
+    # A truthiness check here would collapse {} to None and lose the model.
+    metadata = MetaData()
+    table = Table("pyd_empty", metadata, Column("id", Integer), Column("doc", PydanticJSON(_EmptyDoc)))
+    metadata.create_all(engine)
+
+    with engine.begin() as connection:
+        connection.execute(insert(table), [{"id": 1, "doc": _EmptyDoc()}, {"id": 2, "doc": None}])
+
+    with engine.connect() as connection:
+        rows: dict[int, _EmptyDoc | None] = {
+            row.id: row.doc for row in connection.execute(select(table.c.id, table.c.doc).order_by(table.c.id))
+        }
+
+    assert rows[1] == _EmptyDoc()
+    assert rows[2] is None
