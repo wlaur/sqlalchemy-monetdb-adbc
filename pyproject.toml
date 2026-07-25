@@ -23,7 +23,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "adbc-driver-monetdb>=0.8.2",
+    "adbc-driver-monetdb>=0.8.3",
     "pydantic>=2",
     "pyarrow>=25",
     "sqlalchemy>=2.0.34",
