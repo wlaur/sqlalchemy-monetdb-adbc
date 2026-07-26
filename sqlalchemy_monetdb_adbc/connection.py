@@ -51,9 +51,13 @@ def raw_adbc_connection(connection: SQLAlchemyConnection) -> ADBCConnection:
 
     The returned connection is the exact session SQLAlchemy uses for this
     :class:`~sqlalchemy.engine.Connection`, so Arrow-native reads and
-    ``adbc_ingest`` writes join the surrounding transaction. Do not close it or
-    change its transaction state; use the SQLAlchemy connection for that.
+    ``adbc_ingest`` writes join the surrounding transaction. Accessing it starts
+    SQLAlchemy's transaction if necessary. Do not close it or change its
+    transaction state; use the SQLAlchemy connection for that.
     """
+    if not connection.in_transaction():
+        connection.begin()
+
     driver_connection = connection.connection.driver_connection
 
     if not isinstance(driver_connection, MonetDBConnection):

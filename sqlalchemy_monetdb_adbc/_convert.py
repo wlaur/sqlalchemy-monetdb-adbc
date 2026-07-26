@@ -5,30 +5,29 @@ conversion. For bulk reads that cost can dominate pulling the result off the
 wire. ``to_numpy(zero_copy_only=False).tolist()`` does the same work one column
 at a time in compiled code.
 
-This is why numpy is a dependency rather than an optional accelerator: without
+This is why NumPy is a dependency rather than an optional accelerator: without
 it the fastest available path is reading the Arrow values buffer through
-``memoryview.cast``, which matches numpy on fixed-width numerics but does
+``memoryview.cast``, which matches NumPy on fixed-width numerics but does
 nothing for the string and temporal columns where most of the cost actually is.
 
 The fast path is guarded, and anything not provably identical to ``to_pylist``
-falls back to it. Each exclusion is a case where numpy returns a different
+falls back to it. Each exclusion is a case where NumPy returns a different
 Python type or value, and every one is asserted in ``tests/test_convert.py``:
 
-* Integer and floating-point columns containing nulls. numpy has no integer
+* Integer and floating-point columns containing nulls. NumPy has no integer
   null and represents both cases with ``nan``.
 * Nanosecond timestamps and times, which come back as a raw ``int`` count
-  because numpy cannot represent a nanosecond instant as a ``datetime``.
+  because NumPy cannot represent a nanosecond instant as a ``datetime``.
 * ``date64``, which widens ``datetime.date`` to ``datetime.datetime``.
 * Nested and extension types, which are simply not whitelisted.
 
 For a single non-temporal value, the generic scalar conversion is faster than
-setting up numpy, so point-query batches take that path directly.
+setting up NumPy, so point-query batches take that path directly.
 """
 
 
-# pyarrow ships no type information, so its data types, arrays, and predicates
-# all read as unknown under strict mode. As in ``arrow.py``, Arrow objects are
-# annotated ``Any`` and their concrete types given per function.
+# PyArrow's extension and timezone internals are not fully covered by its
+# third-party stubs, so this conversion boundary keeps those values dynamic.
 # pyright: reportUnknownMemberType=false, reportUnknownArgumentType=false
 
 import datetime
@@ -36,7 +35,7 @@ from typing import Any, Final, cast
 
 import pyarrow as pa
 
-# Temporal units numpy converts to the same Python object ``to_pylist`` returns.
+# Temporal units NumPy converts to the same Python object ``to_pylist`` returns.
 _SAFE_TEMPORAL_UNITS: Final = frozenset({"s", "ms", "us"})
 _ARROW_EXTENSION_NAME: Final = b"ARROW:extension:name"
 _MONETDB_HUGEINT_EXTENSION: Final = b"monetdb.hugeint"

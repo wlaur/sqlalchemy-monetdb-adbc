@@ -42,7 +42,7 @@ The dialect requires `adbc-driver-monetdb` 0.8.5 or newer, which reports
 truthful row counts, exports the PEP 249 `Binary` constructor, caches
 prepared statements per connection, executes one-row bound DML without a
 savepoint, and returns small results from MonetDB's initial reply. One
-`DRIVER-WORKAROUND` remains in the source for upstream Apache arrow-adbc
+`DRIVER-WORKAROUND` remains in the source for upstream Apache Arrow ADBC
 behavior: ADBC always returns an Arrow stream, so the DB-API layer reports an
 empty `description` rather than `None` for statements that produce no result
 set, and SQLAlchemy needs `None` to decide that a statement returned no rows.
@@ -120,35 +120,43 @@ engine = create_engine(
 )
 ```
 
-## Arrow and polars
+## Arrow and Polars
 
 Rows are converted to Python objects only if you ask for them, and that
-conversion is done a column at a time through numpy rather than element by
+conversion is done a column at a time through NumPy rather than element by
 element. Ordinary row-returning queries with meaningful result sizes avoid
 per-cell Arrow scalar boxing.
 
-Driver 0.8.5 removes the avoidable fixed costs found in the release review:
+NumPy is a runtime dependency only for this optimized Arrow-to-Python object
+conversion. Arrow-native reads and writes do not convert through NumPy.
+
+Driver 0.8.6 removes the avoidable fixed costs found in the release review:
 one-row parameterized DML no longer adds a savepoint pair, and results of up to
 100 rows no longer force a second fetch. The driver also batches `executemany`
 parameters into one multi-row statement when MonetDB can preserve the DB-API
-semantics. Tiny row-oriented SELECTs still carry the fixed cost of receiving a
-canonical Arrow stream across the native boundary; use the Arrow helpers below
-when keeping the result columnar matters.
+semantics, and repeated single-batch appends no longer create redundant
+savepoints. Tiny row-oriented SELECTs still carry the fixed cost of receiving
+a canonical Arrow stream across the native boundary; use the Arrow helpers
+below when keeping the result columnar matters.
 
 To skip the conversion entirely and keep data columnar, run the query on the
 same connection and take Arrow back:
 
 ```python
-from sqlalchemy_monetdb_adbc import fetch_arrow_table, fetch_record_batches, ingest_arrow
+from sqlalchemy_monetdb_adbc import (
+    fetch_arrow_table,
+    ingest_arrow,
+    open_arrow_batch_reader,
+)
 
 statement = select(trades.c.id, trades.c.symbol).where(trades.c.symbol == "AAPL")
 
 with Session(engine) as session:
     table = fetch_arrow_table(session.connection(), statement)  # pyarrow.Table
-    frame = polars.from_arrow(table)
+    df = polars.from_arrow(table)
 
     # streaming, for results that should not be materialized at once
-    with fetch_record_batches(session.connection(), statement) as reader:
+    with open_arrow_batch_reader(session.connection(), statement) as reader:
         for batch in reader:
             ...
 
@@ -157,8 +165,41 @@ with Session(engine) as session:
 
 These run on the ADBC session backing the SQLAlchemy connection, so they see
 that connection's uncommitted work, take part in its transaction, and roll back
-with it. Use them rather than opening a second connection with
-`polars.read_database`, which would be a separate session and transaction.
+with it.
+
+For a large incremental write, pass one `pyarrow.RecordBatchReader` to one
+`ingest_arrow` call. The reader remains streaming while the driver keeps one
+operation-level transaction scope.
+
+`polars.read_database` can use that same session too. Pass it the underlying
+ADBC connection owned by SQLAlchemy:
+
+```python
+from sqlalchemy_monetdb_adbc import raw_adbc_connection
+
+with Session(engine) as session:
+    session.execute(insert(trades), {"id": 1, "symbol": "AAPL"})
+
+    df = polars.read_database(
+        query="SELECT id, symbol FROM trades ORDER BY id",
+        connection=raw_adbc_connection(session.connection()),
+    )
+
+    session.commit()
+```
+
+Do not close the returned ADBC connection or change its transaction state;
+SQLAlchemy owns both. Passing a URL to `polars.read_database` instead would
+open a separate session and would not see uncommitted work.
+
+Do not pass the raw ADBC connection to `DataFrame.write_database`: Polars'
+ADBC write path commits the connection after ingesting, which would also
+commit any pending SQLAlchemy work. Use the transaction-aware helper for
+columnar writes:
+
+```python
+ingest_arrow(session.connection(), "trades", df, mode="append")
+```
 
 A SQLAlchemy statement is compiled for you, bind parameters included; a plain
 SQL string works too. `raw_adbc_connection()` returns the underlying ADBC
