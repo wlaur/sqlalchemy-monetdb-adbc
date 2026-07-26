@@ -121,13 +121,20 @@ def test_cross_schema_foreign_key_keeps_referred_schema(engine: Engine) -> None:
         try:
             connection.exec_driver_sql("CREATE TABLE xfk_other.xfk_parent (id INTEGER PRIMARY KEY)")
             connection.exec_driver_sql(
+                "CREATE TABLE xfk_other.xfk_same_child "
+                "(id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES xfk_other.xfk_parent (id))"
+            )
+            connection.exec_driver_sql(
                 "CREATE TABLE xfk_child (id INTEGER PRIMARY KEY, "
                 "parent_id INTEGER REFERENCES xfk_other.xfk_parent (id))"
             )
 
-            foreign_key = inspect(connection).get_foreign_keys("xfk_child")[0]
+            inspector = inspect(connection)
+            foreign_key = inspector.get_foreign_keys("xfk_child")[0]
             assert foreign_key["referred_schema"] == "xfk_other"
             assert foreign_key["referred_table"] == "xfk_parent"
+            same_schema = inspector.get_foreign_keys("xfk_same_child", schema="xfk_other")[0]
+            assert same_schema["referred_schema"] == "xfk_other"
 
             reflected = Table("xfk_child", MetaData(), autoload_with=connection)
             target = next(iter(reflected.foreign_key_constraints)).referred_table

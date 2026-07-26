@@ -29,6 +29,7 @@ dependencies = [
     "pydantic>=2",
     "pyarrow>=25",
     "sqlalchemy>=2.0.34",
+    "tzdata>=2025.2; sys_platform == 'win32'",
 ]
 
 [dependency-groups]

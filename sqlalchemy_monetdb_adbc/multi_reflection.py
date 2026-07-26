@@ -364,7 +364,7 @@ class MonetDBMultiReflection:
                 constraints[name] = ReflectedForeignKeyConstraint(
                     name=name,
                     constrained_columns=[],
-                    referred_schema=None if referred_schema == source_schema else referred_schema,
+                    referred_schema=(None if schema is None and referred_schema == source_schema else referred_schema),
                     referred_table=referred_table,
                     referred_columns=[],
                     options=options,
