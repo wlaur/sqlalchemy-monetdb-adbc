@@ -38,7 +38,7 @@ Regular expression matching is not available: MonetDB's `~` is `mbr_contains`,
 a geometry operator, so `regexp_match()` raises rather than producing SQL that
 means something else. `regexp_replace()` works.
 
-The dialect requires `adbc-driver-monetdb` 0.8.5 or newer, which reports
+The dialect requires `adbc-driver-monetdb` 0.8.6 or newer, which reports
 truthful row counts, exports the PEP 249 `Binary` constructor, caches
 prepared statements per connection, executes one-row bound DML without a
 savepoint, and returns small results from MonetDB's initial reply. One
