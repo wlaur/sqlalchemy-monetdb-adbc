@@ -152,7 +152,7 @@ class MonetDBMultiReflection:
         """Pull the reflection arguments SQLAlchemy passes and resolve the tables."""
         schema = cast(str | None, kw.get("schema"))
         filter_names = cast("Collection[str] | None", kw.get("filter_names"))
-        names = tuple(filter_names) if filter_names else None
+        names = tuple(filter_names) if filter_names is not None else None
         scope = cast(ObjectScope, kw.get("scope", ObjectScope.DEFAULT))
         kind = cast(ObjectKind, kw.get("kind", ObjectKind.TABLE))
 
@@ -185,6 +185,9 @@ class MonetDBMultiReflection:
         rather than "sys". Querying each catalog separately lets the common
         case, where nothing temporary is in scope, skip "tmp" entirely.
         """
+        if filter_names == ():
+            return {}, frozenset()
+
         types: list[int] = []
         if ObjectKind.TABLE in kind:
             types.extend(TABLE_TYPES)
@@ -215,15 +218,18 @@ class MonetDBMultiReflection:
         )
         binds: list[BindParameter[Any]] = [bindparam("types", expanding=True)] if "types" in parameters else []
 
-        if filter_names:
+        if filter_names is not None:
             sql += " AND t.name IN :names"
             parameters["names"] = list(filter_names)
             binds.append(bindparam("names", expanding=True))
 
         statement = text(sql).bindparams(*binds) if binds else text(sql)
         rows = connection.execute(statement, parameters).all()
-        tables = {row[0]: row[1] for row in rows}
-        temporary = frozenset(row[0] for row in rows if row[2] == TABLE_TYPE_LOCAL_TEMPORARY)
+        selected: dict[str, Any] = {}
+        for row in sorted(rows, key=lambda item: item[2] == TABLE_TYPE_LOCAL_TEMPORARY):
+            selected.setdefault(row[1], row)
+        tables = {row[0]: row[1] for row in selected.values()}
+        temporary = frozenset(row[0] for row in selected.values() if row[2] == TABLE_TYPE_LOCAL_TEMPORARY)
         return tables, temporary
 
     def _current_schema(self, connection: Connection) -> str:
@@ -330,11 +336,13 @@ class MonetDBMultiReflection:
 
         rows = self._fetch(
             connection,
-            "SELECT fkk.table_id, fkk.name, fkc.name, ps.name, pkt.name, pkc.name, fkk.action "
+            "SELECT fkk.table_id, fkk.name, fkc.name, fs.name, ps.name, pkt.name, pkc.name, fkk.action "
             "FROM {c}keys fkk "
             "JOIN {c}objects fkc ON fkk.id = fkc.id "
             "JOIN {c}keys pkk ON fkk.rkey = pkk.id "
             "JOIN {c}objects pkc ON pkk.id = pkc.id AND fkc.nr = pkc.nr "
+            "JOIN sys.tables fkt ON fkk.table_id = fkt.id "
+            "JOIN sys.schemas fs ON fkt.schema_id = fs.id "
             "JOIN sys.tables pkt ON pkk.table_id = pkt.id "
             "JOIN sys.schemas ps ON pkt.schema_id = ps.id "
             "WHERE fkk.table_id IN :ids ORDER BY fkk.table_id, fkk.name, fkc.nr",
@@ -343,7 +351,7 @@ class MonetDBMultiReflection:
         )
 
         grouped: dict[int, dict[str, ReflectedForeignKeyConstraint]] = defaultdict(dict)
-        for table_id, name, column, referred_schema, referred_table, referred_column, action in rows:
+        for table_id, name, column, source_schema, referred_schema, referred_table, referred_column, action in rows:
             constraints = grouped[table_id]
             if name not in constraints:
                 options: dict[str, Any] = {}
@@ -356,7 +364,7 @@ class MonetDBMultiReflection:
                 constraints[name] = ReflectedForeignKeyConstraint(
                     name=name,
                     constrained_columns=[],
-                    referred_schema=referred_schema if schema is not None else None,
+                    referred_schema=(None if schema is None and referred_schema == source_schema else referred_schema),
                     referred_table=referred_table,
                     referred_columns=[],
                     options=options,
@@ -441,15 +449,14 @@ class MonetDBMultiReflection:
         if not tables:
             return
 
-        resolved = schema if schema is not None else self._current_schema(connection)
         rows = self._fetch(
             connection,
-            "SELECT k.table_id, k.name, sys.check_constraint(:schema, k.name) FROM {c}keys k "
+            "SELECT k.table_id, k.name, sys.check_constraint(s.name, k.name) FROM {c}keys k "
+            "JOIN sys.tables t ON k.table_id = t.id JOIN sys.schemas s ON t.schema_id = s.id "
             "WHERE k.table_id IN :ids AND k.type = :key_type ORDER BY k.table_id, k.name",
             tables,
             temporary,
             key_type=KEY_TYPE_CHECK,
-            schema=resolved,
         )
 
         grouped: dict[int, list[ReflectedCheckConstraint]] = defaultdict(list)

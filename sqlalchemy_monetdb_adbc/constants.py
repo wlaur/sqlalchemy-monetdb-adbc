@@ -1,5 +1,7 @@
 import re
 
+DIALECT_NAMES = ("monetdb", "monetdb.adbc", "monetdbs", "monetdbs.adbc")
+
 AUTOINCREMENT_DEFAULT = re.compile(r'^next value for "(?P<schema>[^"]+)"\."(?P<sequence>[^"]+)"$')
 
 # MonetDB's own defaults for a DECIMAL declared without precision or scale.

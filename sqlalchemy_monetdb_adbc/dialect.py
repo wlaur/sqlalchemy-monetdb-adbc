@@ -164,6 +164,9 @@ class MonetDBADBCDialect(  # pyright: ignore[reportIncompatibleMethodOverride]
         connection = cast(Any, dbapi_connection)
         autocommit = level == "AUTOCOMMIT"
 
+        # The manager has no public setter that keeps its DB-API bookkeeping in
+        # sync. Its private layout is therefore pinned to 1.11.x and covered by
+        # the live autocommit test.
         if connection._autocommit == autocommit:
             return
 

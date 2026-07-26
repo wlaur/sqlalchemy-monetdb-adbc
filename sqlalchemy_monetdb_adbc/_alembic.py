@@ -22,6 +22,12 @@ from sqlalchemy.sql.type_api import TypeEngine
 from sqlalchemy_monetdb_adbc.types import PydanticJSON
 
 
+def _unquote_string_default(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] == "'":
+        return value[1:-1].replace("''", "'")
+    return value
+
+
 class MonetDBImpl(DefaultImpl):
     __dialect__ = "monetdb"
 
@@ -47,9 +53,9 @@ class MonetDBImpl(DefaultImpl):
         # MonetDB echoes a string default back with its quotes, so compare the
         # unquoted forms rather than reporting every such column as changed.
         if rendered_inspector_default is not None:
-            rendered_inspector_default = rendered_inspector_default.strip("'")
+            rendered_inspector_default = _unquote_string_default(rendered_inspector_default)
         if rendered_metadata_default is not None:
-            rendered_metadata_default = rendered_metadata_default.strip("'")
+            rendered_metadata_default = _unquote_string_default(rendered_metadata_default)
         return rendered_inspector_default != rendered_metadata_default
 
 

@@ -34,17 +34,17 @@ wheels = [
 
 [[package]]
 name = "adbc-driver-monetdb"
-version = "0.8.3"
+version = "0.8.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "adbc-driver-manager" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c5/65/309d988e4fc5d0fb67d4a3e2b47ede683d9770f1890efc95a2990fc568fc/adbc_driver_monetdb-0.8.3.tar.gz", hash = "sha256:e2d073cd38aa69616be56a8c569307ca3c131af253b5de3a83bbf338336ad1d5", size = 296695, upload-time = "2026-07-25T14:40:01.223Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/69/84/e268b7fce48c32fbe67678265a6999579bbd9e3f8b9e9b1fa6effd10809c/adbc_driver_monetdb-0.8.4.tar.gz", hash = "sha256:1ca8230bf6909815fb3c8cff40ffc3fcd0ccb3f720ed2002985fac4019f51e0b", size = 302858, upload-time = "2026-07-26T12:08:11.89Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b3/6e/d9d61099584042af6645ca0c3ded5ede58e65b57970f831192e07bc40cf8/adbc_driver_monetdb-0.8.3-cp313-abi3-macosx_11_0_arm64.whl", hash = "sha256:d6f8f628187d6845c85567d094b74d3532618afb8388d4bacea51f6215771021", size = 2377029, upload-time = "2026-07-25T14:39:55.586Z" },
-    { url = "https://files.pythonhosted.org/packages/ff/c2/350e397a280a6cb83e625d94046980f266fbaa98491b10211a49f462e248/adbc_driver_monetdb-0.8.3-cp313-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:c8ef5e2de71a882f994daa489738afbfe9bea3a78e327a6e6183cfe1d07f80fe", size = 2446761, upload-time = "2026-07-25T14:39:57.154Z" },
-    { url = "https://files.pythonhosted.org/packages/74/10/979a457ac97859e006c3c9fb7e7e861a570d2e82b225e164ceaff88ce4ce/adbc_driver_monetdb-0.8.3-cp313-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:5046aa103a376df2c753f9ee0cb7f457706939f85fdbea2b17fdb5ed7d3b5579", size = 2694032, upload-time = "2026-07-25T14:39:58.466Z" },
-    { url = "https://files.pythonhosted.org/packages/d9/c8/8f3397825f4d6671e88a78392be6b11572c7ae0dc9d430af87e5d9c1ef07/adbc_driver_monetdb-0.8.3-cp313-abi3-win_amd64.whl", hash = "sha256:d03075662d283ca1ce162d143834d5e5c0da01b42e68c08f9eb1fced0c4a45aa", size = 2459066, upload-time = "2026-07-25T14:39:59.825Z" },
+    { url = "https://files.pythonhosted.org/packages/21/cf/c291cbdfa36775632abd3b377f54a5ebb069544f5238da4cdf1590feac1d/adbc_driver_monetdb-0.8.4-cp313-abi3-macosx_11_0_arm64.whl", hash = "sha256:ac45941492ce800274b406355772191fa34d69f5a997ec1d89a8ec1c0b3bfa3d", size = 2381923, upload-time = "2026-07-26T12:08:05.498Z" },
+    { url = "https://files.pythonhosted.org/packages/35/81/b69607c65500fb06bf0c07f9cb277f76e50e40cbdca39b738bb4f9f7eef6/adbc_driver_monetdb-0.8.4-cp313-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:7d4b9aa98a722ce2ad8aee4b1e3612a4271c615a31eebde66cae0f7662425a2e", size = 2449868, upload-time = "2026-07-26T12:08:07.396Z" },
+    { url = "https://files.pythonhosted.org/packages/83/e7/d755278853fb3c290caf06bdec0afceccd281283c5a88feb90469d7fd7af/adbc_driver_monetdb-0.8.4-cp313-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:fe82f4694eb6e462ae04361cb4b0d27b86c72dd83d0581dfe270eb7d6130489d", size = 2699455, upload-time = "2026-07-26T12:08:08.764Z" },
+    { url = "https://files.pythonhosted.org/packages/e7/2a/92406017dcf4b472cf7feaf1ca6cee6cd30197ac49971a07b7cfef56eb73/adbc_driver_monetdb-0.8.4-cp313-abi3-win_amd64.whl", hash = "sha256:21e7b7756705e5c253d26273afc813cc5eaee3f7f5f0c4701ccd71096bb037e1", size = 2464683, upload-time = "2026-07-26T12:08:10.366Z" },
 ]
 
 [[package]]
@@ -468,11 +468,13 @@ name = "sqlalchemy-monetdb-adbc"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "adbc-driver-manager" },
     { name = "adbc-driver-monetdb" },
     { name = "numpy" },
     { name = "pyarrow" },
     { name = "pydantic" },
     { name = "sqlalchemy" },
+    { name = "tzdata", marker = "sys_platform == 'win32'" },
 ]
 
 [package.dev-dependencies]
@@ -485,11 +487,13 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "adbc-driver-monetdb", specifier = ">=0.8.3" },
+    { name = "adbc-driver-manager", specifier = ">=1.11,<1.12" },
+    { name = "adbc-driver-monetdb", specifier = ">=0.8.4" },
     { name = "numpy", specifier = ">=2.1" },
     { name = "pyarrow", specifier = ">=25" },
     { name = "pydantic", specifier = ">=2" },
     { name = "sqlalchemy", specifier = ">=2.0.34" },
+    { name = "tzdata", marker = "sys_platform == 'win32'", specifier = ">=2025.2" },
 ]
 
 [package.metadata.requires-dev]
@@ -519,4 +523,13 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/55/e3/70399cb7dd41c10ac53367ae42139cf4b1ca5f36bb3dc6c9d33acdb43655/typing_inspection-0.4.2.tar.gz", hash = "sha256:ba561c48a67c5958007083d386c3295464928b01faa735ab8547c5692e87f464", size = 75949, upload-time = "2025-10-01T02:14:41.687Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/dc/9b/47798a6c91d8bdb567fe2698fe81e0c6b7cb7ef4d13da4114b41d239f65d/typing_inspection-0.4.2-py3-none-any.whl", hash = "sha256:4ed1cacbdc298c220f1bd249ed5287caa16f34d44ef4e9c3d0cbad5b521545e7", size = 14611, upload-time = "2025-10-01T02:14:40.154Z" },
+]
+
+[[package]]
+name = "tzdata"
+version = "2026.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/92/ff/5a28bdfd8c3ebec42564ac7d0e54ca3db65044a9314a97f9564fa7a1e926/tzdata-2026.3.tar.gz", hash = "sha256:4a1518b8993086a7982523e071643f3c0e5f213e75b21318e78bcabfff9d1415", size = 198674, upload-time = "2026-07-10T08:50:37.887Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e5/6d/b53b99a9f2766d095985947a5782f1702cabb129a34f7a802d7197af832f/tzdata-2026.3-py2.py3-none-any.whl", hash = "sha256:dc096730c87af6cab1b171c9d532be840741ff5d459015e7f6947bd7d7e54931", size = 348168, upload-time = "2026-07-10T08:50:36.46Z" },
 ]

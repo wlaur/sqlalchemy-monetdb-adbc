@@ -7,3 +7,9 @@ services:
     environment:
       MDB_DB_ADMIN_PASS: monetdb
       MDB_CREATE_DBS: test
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/50000"]
+      interval: 2s
+      timeout: 2s
+      retries: 60
+      start_period: 5s

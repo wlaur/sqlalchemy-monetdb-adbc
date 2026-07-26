@@ -1,17 +1,21 @@
 from types import ModuleType
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.dialects import registry
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import SAWarning
+from sqlalchemy.sql import sqltypes
 
 from sqlalchemy_monetdb_adbc import MonetDBADBCDialect
+from sqlalchemy_monetdb_adbc._alembic import MonetDBImpl
+from sqlalchemy_monetdb_adbc.constants import DIALECT_NAMES
+from sqlalchemy_monetdb_adbc.reflection import resolve_type
 
 
 def test_entry_point_loads_dialect() -> None:
-    assert registry.load("monetdb") is MonetDBADBCDialect
-    assert registry.load("monetdb.adbc") is MonetDBADBCDialect
-    assert registry.load("monetdbs") is MonetDBADBCDialect
-    assert registry.load("monetdbs.adbc") is MonetDBADBCDialect
+    for dialect_name in DIALECT_NAMES:
+        assert registry.load(dialect_name) is MonetDBADBCDialect
 
 
 def test_create_engine_loads_dialect_without_connecting() -> None:
@@ -56,3 +60,22 @@ def test_create_connect_args_preserves_tls_scheme() -> None:
 
     assert args == ("monetdbs://monetdb:secret@localhost:50000/demo",)
     assert kwargs == {}
+
+
+def test_unknown_reflected_type_warns_and_uses_nulltype() -> None:
+    with pytest.warns(SAWarning, match="Did not recognize MonetDB type 'future_type'"):
+        data_type = resolve_type("future_type", 0, 0)
+
+    assert data_type is sqltypes.NULLTYPE
+
+
+def test_alembic_unquotes_exactly_one_sql_string_layer() -> None:
+    implementation = MonetDBImpl.__new__(MonetDBImpl)
+    assert not implementation.compare_server_default(None, None, "'x'", "'x'")
+    assert implementation.compare_server_default(None, None, "'x'", "'''x'''")
+    assert not implementation.compare_server_default(
+        None,
+        None,
+        "CURRENT_TIMESTAMP",
+        "CURRENT_TIMESTAMP",
+    )

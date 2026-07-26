@@ -23,11 +23,13 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "adbc-driver-monetdb>=0.8.3",
+    "adbc-driver-manager>=1.11,<1.12",
+    "adbc-driver-monetdb>=0.8.4",
     "numpy>=2.1",
     "pydantic>=2",
     "pyarrow>=25",
     "sqlalchemy>=2.0.34",
+    "tzdata>=2025.2; sys_platform == 'win32'",
 ]
 
 [dependency-groups]
@@ -48,6 +50,13 @@ dev = [
 Homepage = "https://github.com/wlaur/sqlalchemy-monetdb-adbc"
 Repository = "https://github.com/wlaur/sqlalchemy-monetdb-adbc"
 Issues = "https://github.com/wlaur/sqlalchemy-monetdb-adbc/issues"
+
+[tool.hatch.build]
+exclude = [
+    "/MONETDB_ISSUE.md",
+    "/REVIEW.md",
+    "/benchmarks",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["sqlalchemy_monetdb_adbc"]
@@ -84,7 +93,7 @@ lint.ignore = ["ANN401", "ARG002", "ISC001"]
 max-complexity = 10
 
 [tool.pyright]
-include = ["sqlalchemy_monetdb_adbc", "tests"]
+include = ["sqlalchemy_monetdb_adbc", "tests", "packaging"]
 venvPath = "."
 venv = ".venv"
 typeCheckingMode = "strict"

@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from typing import Any, cast
 
-from sqlalchemy import exc, text
+from sqlalchemy import exc, text, util
 from sqlalchemy.engine import Connection, reflection
 from sqlalchemy.sql import sqltypes
 
@@ -22,7 +22,8 @@ def resolve_type(type_name: str, digits: int, scale: int) -> sqltypes.TypeEngine
 
     impl = MONETDB_TYPE_MAP.get(type_name)
     if impl is None:
-        raise exc.InvalidRequestError(f"unknown MonetDB type: {type_name}")
+        util.warn(f"Did not recognize MonetDB type {type_name!r}")
+        return sqltypes.NULLTYPE
 
     if type_name == "timestamptz":
         return sqltypes.TIMESTAMP(timezone=True)
@@ -168,12 +169,11 @@ class MonetDBReflection:
 
     @reflection.cache
     def has_table(self, connection: Connection, table_name: str, schema: str | None = None, **kw: Any) -> bool:
-        query = text("SELECT 1 FROM sys.tables WHERE name = :name AND schema_id = :schema_id")
         try:
-            schema_id = self._schema_id(connection, schema)
-        except exc.InvalidRequestError:
+            self._table_id(connection, table_name, schema, **kw)
+        except (exc.InvalidRequestError, exc.NoSuchTableError):
             return False
-        return connection.execute(query, {"name": table_name, "schema_id": schema_id}).scalar() is not None
+        return True
 
     @reflection.cache
     def has_sequence(self, connection: Connection, sequence_name: str, schema: str | None = None, **kw: Any) -> bool:
