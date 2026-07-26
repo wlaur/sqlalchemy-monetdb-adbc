@@ -15,7 +15,7 @@ and is validated against a live MonetDB server. It is not released to PyPI yet.
 ### Dialect compliance suite
 
 SQLAlchemy's own dialect suite runs from `suite/` (see Development) and reports
-no failures: 1236 passed, 17 xfailed, 388 skipped. Each xfail is a MonetDB or
+no failures: 1237 passed, 16 xfailed, 388 skipped. Each xfail is a MonetDB or
 driver limitation, listed with its reason in `suite/known_failures.py`. They are
 marked xfail rather than skipped so that the tests still run, and report XPASS
 if a future release gains the behaviour:
@@ -30,7 +30,6 @@ if a future release gains the behaviour:
 - `RETURNING *` needs an explicit column list.
 - JSON is normalized on input, so a document does not round-trip byte for byte.
 - Some identifiers legal elsewhere are rejected, such as one containing `%`.
-- The driver cannot bind a parameter batch that mixes `float` and `Decimal`.
 
 Common table expressions are fully supported, including recursive CTEs, CTEs
 over `VALUES`, and CTEs driving `UPDATE`/`DELETE`. MonetDB's `WITH` accepts only
@@ -73,6 +72,9 @@ to decide that a statement returned no rows.
   always renders that explicitly: MonetDB drops the connection when a
   *parameter* is cast to an unsized `DECIMAL`, which is what SQLAlchemy emits
   for true division.
+- A `Numeric` column accepts `float`, `int` and `Decimal` in the same
+  `executemany`. ADBC would otherwise take the column's Arrow type from the
+  first value and reject the rest, so the dialect normalises the column first.
 - A `UNIQUE` constraint is backed by an index of the same name, so it is
   reflected both by `get_unique_constraints()` and by `get_indexes()`.
 

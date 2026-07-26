@@ -102,11 +102,24 @@ class MonetDBNumeric(sqltypes.Numeric[Any]):
         as_decimal = self.asdecimal
 
         def process(value: Any) -> Any:
-            # ADBC infers a bound column's Arrow type from its first value, so a
-            # Decimal reaching a column declared asdecimal=False breaks binding.
-            if not as_decimal and isinstance(value, Decimal):
-                return float(value)
-            return value
+            # Bind one Python type per column, whatever the caller passed.
+            #
+            # adbc_driver_manager builds the parameter batch with
+            # pyarrow.RecordBatch.from_pydict, which infers each column's Arrow
+            # type from its first value and then fails on any row that does not
+            # fit: a Decimal after a float raises "tried to convert to double",
+            # and a float after a Decimal raises "int or Decimal object
+            # expected". Mixing the two in one executemany is ordinary usage, so
+            # normalise here rather than leave it to the caller.
+            if value is None:
+                return None
+            if as_decimal:
+                if isinstance(value, bool) or not isinstance(value, float | int):
+                    return value
+                # str() first: Decimal(15.7563) would carry the full binary
+                # expansion of the float rather than the value that was written.
+                return Decimal(str(value))
+            return float(value) if isinstance(value, Decimal) else value
 
         return process
 

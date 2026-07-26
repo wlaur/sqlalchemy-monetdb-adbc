@@ -634,3 +634,39 @@ def test_batched_reflection_issues_few_statements(engine: Engine) -> None:
     statements = sum(1 for record in records if str(record.msg).lstrip().startswith(("SELECT", "WITH")))
     # One query per reflected kind, not per table; the per-table loop took 20x this.
     assert statements < 40, f"reflection issued {statements} statements"
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        [15.7563, decimal.Decimal("15.7563")],
+        [decimal.Decimal("15.7563"), 15.7563],
+        [1, decimal.Decimal("2.5"), 3.5],
+        [decimal.Decimal("2.5"), None, 3.5],
+    ],
+    ids=["float-first", "decimal-first", "int-mixed", "with-null"],
+)
+def test_numeric_binds_mixed_python_types(engine: Engine, values: list[Any]) -> None:
+    """A Numeric column accepts float, int and Decimal in one executemany.
+
+    adbc_driver_manager builds the parameter batch with
+    pyarrow.RecordBatch.from_pydict, which takes each column's Arrow type from
+    its first value and then rejects any row that does not fit. MonetDBNumeric
+    normalises the column so callers can mix them.
+    """
+    metadata = MetaData()
+    table = Table("numeric_mixed_binds", metadata, Column("value", Numeric(18, 4)))
+    metadata.drop_all(engine)
+    metadata.create_all(engine)
+
+    try:
+        with engine.begin() as connection:
+            connection.execute(insert(table), [{"value": value} for value in values])
+
+        with engine.connect() as connection:
+            stored = sorted(row[0] for row in connection.execute(select(table.c.value)) if row[0] is not None)
+
+        assert stored == sorted(decimal.Decimal(str(value)) for value in values if value is not None)
+        assert all(isinstance(value, decimal.Decimal) for value in stored)
+    finally:
+        metadata.drop_all(engine)
