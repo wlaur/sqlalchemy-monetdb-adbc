@@ -145,7 +145,7 @@ statement = select(trades.c.id, trades.c.symbol).where(trades.c.symbol == "AAPL"
 
 with Session(engine) as session:
     table = fetch_arrow_table(session.connection(), statement)  # pyarrow.Table
-    frame = polars.from_arrow(table)
+    df = polars.from_arrow(table)
 
     # streaming, for results that should not be materialized at once
     with fetch_record_batches(session.connection(), statement) as reader:
@@ -168,7 +168,7 @@ from sqlalchemy_monetdb_adbc import raw_adbc_connection
 with Session(engine) as session:
     session.execute(insert(trades), {"id": 1, "symbol": "AAPL"})
 
-    frame = polars.read_database(
+    df = polars.read_database(
         query="SELECT id, symbol FROM trades ORDER BY id",
         connection=raw_adbc_connection(session.connection()),
     )
@@ -186,7 +186,7 @@ commit any pending SQLAlchemy work. Use the transaction-aware helper for
 columnar writes:
 
 ```python
-ingest_arrow(session.connection(), "trades", frame, mode="append")
+ingest_arrow(session.connection(), "trades", df, mode="append")
 ```
 
 A SQLAlchemy statement is compiled for you, bind parameters included; a plain

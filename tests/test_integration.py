@@ -241,12 +241,12 @@ def test_polars_read_database_shares_the_sqlalchemy_transaction(engine: Engine) 
             )
             == 1
         )
-        frame = pl.read_database(
+        df = pl.read_database(
             query="SELECT id, label FROM polars_target ORDER BY id",
             connection=raw_adbc_connection(session.connection()),
         )
 
-        assert frame.to_dicts() == [
+        assert df.to_dicts() == [
             {"id": 1, "label": "uncommitted"},
             {"id": 2, "label": "polars"},
         ]
