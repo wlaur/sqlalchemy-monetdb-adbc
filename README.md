@@ -4,8 +4,7 @@ A SQLAlchemy dialect for MonetDB backed by
 [`adbc-driver-monetdb`](https://github.com/wlaur/adbc-driver-monetdb).
 
 The package is pure Python. It gives SQLAlchemy and Arrow-native ADBC operations a
-single MonetDB connection and transaction boundary, without depending on `pymonetdb`
-or `sqlalchemy-monetdb`.
+single MonetDB connection and transaction boundary.
 
 ## Status
 
