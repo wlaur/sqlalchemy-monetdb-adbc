@@ -16,13 +16,16 @@ The fast path is guarded, and anything not provably identical to ``to_pylist``
 falls back to it. Each exclusion is a case where numpy returns a different
 Python type or value, and every one is asserted in ``tests/test_convert.py``:
 
-* Columns containing nulls. numpy has no integer null, so it widens the column
-  to float and turns nulls into ``nan``.
+* Integer and floating-point columns containing nulls. numpy has no integer
+  null and represents both cases with ``nan``.
 * Timezone-aware timestamps, which come back naive with ``tzinfo`` dropped.
 * Nanosecond timestamps and times, which come back as a raw ``int`` count
   because numpy cannot represent a nanosecond instant as a ``datetime``.
 * ``date64``, which widens ``datetime.date`` to ``datetime.datetime``.
 * Nested and extension types, which are simply not whitelisted.
+
+For a single non-temporal value, the generic scalar conversion is faster than
+setting up numpy, so point-query batches take that path directly.
 """
 
 
@@ -72,7 +75,9 @@ def column_to_pylist(column: Any) -> list[Any]:
     Always equal to ``column.to_pylist()``, down to the exact Python type of
     every element.
     """
-    if column.null_count or not _numpy_safe(column.type):
+    nulls_change_values = column.null_count and (pa.types.is_integer(column.type) or pa.types.is_floating(column.type))
+    tiny_scalar_batch = len(column) == 1 and not pa.types.is_temporal(column.type)
+    if tiny_scalar_batch or nulls_change_values or not _numpy_safe(column.type):
         return cast(list[Any], column.to_pylist())
 
     return cast(list[Any], column.to_numpy(zero_copy_only=False).tolist())

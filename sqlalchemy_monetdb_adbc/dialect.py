@@ -1,6 +1,8 @@
 import contextlib
 from collections.abc import Callable
+from threading import Lock
 from typing import Any, ClassVar, cast
+from weakref import WeakKeyDictionary
 
 from sqlalchemy import pool
 from sqlalchemy.engine import default
@@ -14,7 +16,11 @@ from sqlalchemy.engine.interfaces import (
 from sqlalchemy.engine.url import URL
 from sqlalchemy.sql import sqltypes
 
-from sqlalchemy_monetdb_adbc.base import MonetDBExecutionContext, MonetDBIdentifierPreparer
+from sqlalchemy_monetdb_adbc.base import (
+    MonetDBCursor,
+    MonetDBExecutionContext,
+    MonetDBIdentifierPreparer,
+)
 from sqlalchemy_monetdb_adbc.compiler import MonetDBCompiler, MonetDBDDLCompiler, MonetDBTypeCompiler
 from sqlalchemy_monetdb_adbc.multi_reflection import MonetDBMultiReflection
 from sqlalchemy_monetdb_adbc.reflection import MonetDBReflection
@@ -121,6 +127,8 @@ class MonetDBADBCDialect(  # pyright: ignore[reportIncompatibleMethodOverride]
         super().__init__(**kwargs)
         self._json_serializer = json_serializer
         self._json_deserializer = json_deserializer
+        self._parameter_schemas: WeakKeyDictionary[Any, dict[str, Any]] = WeakKeyDictionary()
+        self._parameter_schemas_lock = Lock()
 
     @classmethod
     def import_dbapi(cls) -> DBAPIModule:
@@ -147,6 +155,18 @@ class MonetDBADBCDialect(  # pyright: ignore[reportIncompatibleMethodOverride]
         finally:
             cursor.close()
         return True
+
+    def is_disconnect(
+        self,
+        e: DBAPIModule.Error,
+        connection: PoolProxiedConnection | DBAPIConnection | None,
+        cursor: DBAPICursor | None,
+    ) -> bool:
+        from adbc_driver_manager import AdbcStatusCode
+
+        if getattr(e, "status_code", None) == AdbcStatusCode.IO:
+            return True
+        return bool(connection is not None and getattr(connection, "_closed", False))
 
     def get_isolation_level_values(self, dbapi_conn: DBAPIConnection) -> tuple[IsolationLevel, ...]:
         # MonetDB runs optimistic-concurrency snapshot transactions and rejects
@@ -187,7 +207,18 @@ class MonetDBADBCDialect(  # pyright: ignore[reportIncompatibleMethodOverride]
         parameters: Any,
         context: Any = None,
     ) -> None:
-        cursor.execute(statement, parameters)
+        compiled = getattr(context, "compiled", None)
+        if compiled is None:
+            cursor.execute(statement, parameters)
+            return
+        schema = self._parameter_schema(compiled, statement)
+        _, inferred_schema = cast(MonetDBCursor, cursor).execute_with_parameter_schema(
+            statement,
+            parameters,
+            schema,
+        )
+        if inferred_schema is not None and inferred_schema != schema:
+            self._remember_parameter_schema(compiled, statement, inferred_schema)
 
     def do_executemany(
         self,
@@ -196,4 +227,29 @@ class MonetDBADBCDialect(  # pyright: ignore[reportIncompatibleMethodOverride]
         parameters: Any,
         context: Any = None,
     ) -> None:
-        cursor.executemany(statement, parameters)
+        compiled = getattr(context, "compiled", None)
+        if compiled is None:
+            cursor.executemany(statement, parameters)
+            return
+        schema = self._parameter_schema(compiled, statement)
+        _, inferred_schema = cast(MonetDBCursor, cursor).executemany_with_parameter_schema(
+            statement,
+            parameters,
+            schema,
+        )
+        if inferred_schema is not None and inferred_schema != schema:
+            self._remember_parameter_schema(compiled, statement, inferred_schema)
+
+    def _parameter_schema(self, compiled: Any, statement: str) -> Any:
+        with self._parameter_schemas_lock:
+            schemas = self._parameter_schemas.get(compiled)
+            return None if schemas is None else schemas.get(statement)
+
+    def _remember_parameter_schema(
+        self,
+        compiled: Any,
+        statement: str,
+        schema: Any,
+    ) -> None:
+        with self._parameter_schemas_lock:
+            self._parameter_schemas.setdefault(compiled, {})[statement] = schema

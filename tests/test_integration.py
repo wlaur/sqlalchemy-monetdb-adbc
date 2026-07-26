@@ -5,6 +5,8 @@ import warnings
 from collections.abc import Iterator
 from typing import Any, cast
 
+import adbc_driver_manager
+import numpy as np
 import pytest
 from pydantic import BaseModel
 from sqlalchemy import (
@@ -384,6 +386,38 @@ def test_bulk_delete_on_self_referential_table(engine: Engine) -> None:
         assert connection.execute(select(table.c.id)).scalars().all() == []
 
 
+def test_server_errors_preserve_dbapi_class_and_sqlstate(engine: Engine) -> None:
+    metadata = MetaData()
+    table = Table(
+        "server_error_target",
+        metadata,
+        Column("id", Integer, primary_key=True, autoincrement=False),
+    )
+    metadata.create_all(engine)
+
+    with engine.connect() as connection:
+        with pytest.raises(exc.ProgrammingError) as syntax:
+            connection.exec_driver_sql("SELEC 1")
+        assert isinstance(syntax.value.orig, adbc_driver_manager.ProgrammingError)
+        assert syntax.value.orig.status_code == adbc_driver_manager.AdbcStatusCode.INVALID_ARGUMENT
+        assert syntax.value.orig.sqlstate == "42000"
+        assert not syntax.value.connection_invalidated
+        connection.rollback()
+
+    with engine.connect() as connection:
+        transaction = connection.begin()
+        with pytest.raises(exc.IntegrityError) as constraint:
+            connection.execute(insert(table), [{"id": 1}, {"id": 1}, {"id": 2}])
+        assert isinstance(constraint.value.orig, adbc_driver_manager.IntegrityError)
+        assert constraint.value.orig.status_code == adbc_driver_manager.AdbcStatusCode.INTEGRITY
+        assert constraint.value.orig.sqlstate == "40002"
+        assert not constraint.value.connection_invalidated
+        transaction.rollback()
+
+    with engine.connect() as connection:
+        assert connection.execute(select(table.c.id)).all() == []
+
+
 def test_rowcount_reports_affected_rows(engine: Engine) -> None:
     metadata = MetaData()
     table = Table("rowcount_target", metadata, Column("id", Integer), Column("label", String(10)))
@@ -597,6 +631,9 @@ def test_arrow_helpers_run_on_the_sqlalchemy_transaction(engine: Engine) -> None
         assert arrow_table.num_rows == 50
         assert arrow_table.schema.names == ["id", "sym"]
 
+        expanded = select(table.c.id).where(table.c.id.in_([1, 3, 5])).order_by(table.c.id)
+        assert fetch_arrow_table(session.connection(), expanded).column("id").to_pylist() == [1, 3, 5]
+
         with fetch_record_batches(session.connection(), statement) as reader:
             assert sum(batch.num_rows for batch in reader) == 50
 
@@ -706,9 +743,10 @@ def test_batched_reflection_issues_few_statements(engine: Engine) -> None:
         [15.7563, decimal.Decimal("15.7563")],
         [decimal.Decimal("15.7563"), 15.7563],
         [1, decimal.Decimal("2.5"), 3.5],
+        [np.int64(1), decimal.Decimal("2.5"), np.float32(3.5)],
         [decimal.Decimal("2.5"), None, 3.5],
     ],
-    ids=["float-first", "decimal-first", "int-mixed", "with-null"],
+    ids=["float-first", "decimal-first", "int-mixed", "numpy-mixed", "with-null"],
 )
 def test_numeric_binds_mixed_python_types(engine: Engine, values: list[Any]) -> None:
     """A Numeric column accepts float, int and Decimal in one executemany.

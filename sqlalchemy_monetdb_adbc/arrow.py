@@ -13,11 +13,20 @@ from sqlalchemy_monetdb_adbc.connection import raw_adbc_connection
 # and accept are annotated as Any. Their concrete types are given per function.
 
 
-def _to_sql(connection: Connection, statement: Executable | str) -> tuple[str, list[Any]]:
+def compile_arrow_statement(connection: Connection, statement: Executable | str) -> tuple[str, list[Any]]:
     if isinstance(statement, str):
         return statement, []
 
-    compiled = cast(SQLCompiler, cast(ClauseElement, statement).compile(dialect=connection.dialect))
+    schema_translate_map = connection.get_execution_options().get("schema_translate_map")
+    compiled = cast(
+        SQLCompiler,
+        cast(ClauseElement, statement).compile(
+            dialect=connection.dialect,
+            schema_translate_map=schema_translate_map,
+            render_schema_translate=bool(schema_translate_map),
+            compile_kwargs={"render_postcompile": True},
+        ),
+    )
     parameters = compiled.params
     # The dialect uses qmark, so bind values go positionally in the order the
     # compiler emitted them.
@@ -36,7 +45,7 @@ def fetch_arrow_table(
     connection's uncommitted work and takes part in its transaction. Rows are
     never converted to Python objects.
     """
-    sql, bound = _to_sql(connection, statement)
+    sql, bound = compile_arrow_statement(connection, statement)
     adbc_connection = raw_adbc_connection(connection)
 
     with adbc_connection.cursor() as cursor:
@@ -58,7 +67,7 @@ def fetch_record_batches(
     behind it is open. MonetDB carries one result channel per session, so
     finish the stream before using ``connection`` again.
     """
-    sql, bound = _to_sql(connection, statement)
+    sql, bound = compile_arrow_statement(connection, statement)
     adbc_connection = raw_adbc_connection(connection)
 
     with adbc_connection.cursor() as cursor:

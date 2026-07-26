@@ -4,6 +4,7 @@ import argparse
 import subprocess
 import tarfile
 import tomllib
+import zipfile
 from pathlib import Path
 
 
@@ -49,6 +50,17 @@ def verify_artifacts(path: Path, version: str) -> None:
     found = {artifact.name for artifact in artifacts}
     if any(not artifact.is_file() for artifact in artifacts) or found != expected:
         raise ValueError(f"release artifact set mismatch: found={sorted(found)}, expected={sorted(expected)}")
+    package = "sqlalchemy_monetdb_adbc"
+    source_files = {
+        f"{package}/{source.name}"
+        for pattern in ("*.py", "py.typed")
+        for source in (path.parent / package).glob(pattern)
+    }
+    with zipfile.ZipFile(path / f"{prefix}-py3-none-any.whl") as archive:
+        wheel_files = set(archive.namelist())
+    missing = source_files - wheel_files
+    if missing:
+        raise ValueError(f"wheel is missing package files: {sorted(missing)}")
     with tarfile.open(path / f"{prefix}.tar.gz") as archive:
         members = archive.getnames()
     forbidden = {"MONETDB_ISSUE.md", "REVIEW.md", "benchmarks"}

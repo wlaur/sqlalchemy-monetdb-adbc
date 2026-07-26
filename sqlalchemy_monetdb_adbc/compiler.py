@@ -342,7 +342,7 @@ class MonetDBCompiler(compiler.SQLCompiler):
     def render_literal_value(self, value: Any, type_: sqltypes.TypeEngine[Any]) -> str:
         rendered = super().render_literal_value(value, type_)
         if isinstance(value, str):
-            return rendered.replace("\\", "\\\\")
+            return f"R{rendered}"
         return rendered
 
     def update_from_clause(
