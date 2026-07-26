@@ -17,6 +17,7 @@ from sqlalchemy.engine.interfaces import (
     ReflectedCheckConstraint,
     ReflectedColumn,
     ReflectedForeignKeyConstraint,
+    ReflectedIdentity,
     ReflectedIndex,
     ReflectedPrimaryKeyConstraint,
     ReflectedTableComment,
@@ -32,6 +33,7 @@ from sqlalchemy_monetdb_adbc.constants import (
     KEY_TYPE_PRIMARY,
     KEY_TYPE_UNIQUE,
     TABLE_TYPE_LOCAL_TEMPORARY,
+    TABLE_TYPE_SYSTEM_VIEW,
     TABLE_TYPE_VIEW,
     TABLE_TYPES,
 )
@@ -192,7 +194,7 @@ class MonetDBMultiReflection:
         if ObjectKind.TABLE in kind:
             types.extend(TABLE_TYPES)
         if ObjectKind.VIEW in kind:
-            types.append(TABLE_TYPE_VIEW)
+            types.extend((TABLE_TYPE_VIEW, TABLE_TYPE_SYSTEM_VIEW))
         # MonetDB has no materialized views.
 
         scopes: list[str] = []
@@ -214,7 +216,7 @@ class MonetDBMultiReflection:
 
         sql = (
             "SELECT t.id, t.name, t.type FROM sys.tables t JOIN sys.schemas s ON t.schema_id = s.id "
-            f"WHERE t.system = FALSE AND ({' OR '.join(scopes)})"
+            f"WHERE ({' OR '.join(scopes)})"
         )
         binds: list[BindParameter[Any]] = [bindparam("types", expanding=True)] if "types" in parameters else []
 
@@ -261,6 +263,52 @@ class MonetDBMultiReflection:
 
         return rows
 
+    def _sequence_reflection(
+        self,
+        connection: Connection,
+        defaults: Collection[str | None],
+    ) -> dict[tuple[str, str], tuple[bool, ReflectedIdentity]]:
+        references = {
+            (match["schema"], match["sequence"])
+            for default in defaults
+            if default is not None and (match := AUTOINCREMENT_DEFAULT.fullmatch(default)) is not None
+        }
+        if not references:
+            return {}
+
+        statement = text(
+            "SELECT n.name, seq.name, seq.start, seq.minvalue, seq.maxvalue, seq.increment, "
+            "seq.cacheinc, seq.cycle, EXISTS ("
+            "SELECT 1 FROM sys.dependencies d "
+            "WHERE d.id = seq.id AND d.depend_id = seq.id AND d.depend_type = 14"
+            ") FROM sys.sequences seq JOIN sys.schemas n ON seq.schema_id = n.id "
+            "WHERE seq.name IN :names"
+        ).bindparams(bindparam("names", expanding=True))
+        rows = connection.execute(statement, {"names": sorted({name for _, name in references})})
+
+        sequences: dict[tuple[str, str], tuple[bool, ReflectedIdentity]] = {}
+        for schema, name, start, minvalue, maxvalue, increment, cache, cycle, generated in rows:
+            key = (schema, name)
+            if key not in references:
+                continue
+            sequences[key] = (
+                bool(generated),
+                ReflectedIdentity(
+                    always=False,
+                    on_null=False,
+                    start=int(start),
+                    increment=int(increment),
+                    minvalue=int(minvalue),
+                    maxvalue=int(maxvalue),
+                    nominvalue=False,
+                    nomaxvalue=False,
+                    cycle=bool(cycle),
+                    cache=int(cache),
+                    order=False,
+                ),
+            )
+        return sequences
+
     def get_multi_columns(
         self,
         connection: Connection,
@@ -278,20 +326,24 @@ class MonetDBMultiReflection:
             tables,
             temporary,
         )
+        sequences = self._sequence_reflection(connection, [row[6] for row in rows])
 
         grouped: dict[int, list[ReflectedColumn]] = defaultdict(list)
         for table_id, name, type_name, digits, scale, nullable, default, comment in rows:
-            autoincrement = default is not None and AUTOINCREMENT_DEFAULT.match(default) is not None
-            grouped[table_id].append(
-                ReflectedColumn(
-                    name=name,
-                    type=resolve_type(type_name, digits, scale),
-                    nullable=bool(nullable),
-                    default=None if autoincrement else default,
-                    autoincrement=autoincrement,
-                    comment=comment,
-                )
+            match = AUTOINCREMENT_DEFAULT.fullmatch(default) if default is not None else None
+            sequence = sequences.get((match["schema"], match["sequence"])) if match is not None else None
+            generated = sequence[0] if sequence is not None else False
+            column = ReflectedColumn(
+                name=name,
+                type=resolve_type(type_name, digits, scale),
+                nullable=bool(nullable),
+                default=None if generated else default,
+                autoincrement=generated,
+                comment=comment,
             )
+            if generated and sequence is not None:
+                column["identity"] = sequence[1]
+            grouped[table_id].append(column)
 
         for table_id, name in tables.items():
             yield (schema, name), grouped[table_id]

@@ -1,11 +1,9 @@
 """Fast Arrow column to Python list conversion.
 
 ``pyarrow.Array.to_pylist`` boxes every element through a generic scalar
-conversion. For bulk reads that cost dominates everything else: converting a
-50k-row, 4-column result took about ten times as long as pulling it off the
-wire. ``to_numpy(zero_copy_only=False).tolist()`` does the same work in a single
-C pass, roughly 13x faster on numerics, strings, and binary, and up to 36x on
-temporal types. End to end that took a 50k-row read from 39.8ms to 12.3ms.
+conversion. For bulk reads that cost can dominate pulling the result off the
+wire. ``to_numpy(zero_copy_only=False).tolist()`` does the same work one column
+at a time in compiled code.
 
 This is why numpy is a dependency rather than an optional accelerator: without
 it the fastest available path is reading the Arrow values buffer through
@@ -18,7 +16,6 @@ Python type or value, and every one is asserted in ``tests/test_convert.py``:
 
 * Integer and floating-point columns containing nulls. numpy has no integer
   null and represents both cases with ``nan``.
-* Timezone-aware timestamps, which come back naive with ``tzinfo`` dropped.
 * Nanosecond timestamps and times, which come back as a raw ``int`` count
   because numpy cannot represent a nanosecond instant as a ``datetime``.
 * ``date64``, which widens ``datetime.date`` to ``datetime.datetime``.
@@ -34,12 +31,15 @@ setting up numpy, so point-query batches take that path directly.
 # annotated ``Any`` and their concrete types given per function.
 # pyright: reportUnknownMemberType=false, reportUnknownArgumentType=false
 
+import datetime
 from typing import Any, Final, cast
 
 import pyarrow as pa
 
 # Temporal units numpy converts to the same Python object ``to_pylist`` returns.
 _SAFE_TEMPORAL_UNITS: Final = frozenset({"s", "ms", "us"})
+_ARROW_EXTENSION_NAME: Final = b"ARROW:extension:name"
+_MONETDB_HUGEINT_EXTENSION: Final = b"monetdb.hugeint"
 
 
 def _numpy_safe(data_type: Any) -> bool:
@@ -49,7 +49,7 @@ def _numpy_safe(data_type: Any) -> bool:
     ``to_pylist`` instead of silently converting through an unverified path.
     """
     if pa.types.is_timestamp(data_type):
-        return data_type.tz is None and data_type.unit in _SAFE_TEMPORAL_UNITS
+        return data_type.unit in _SAFE_TEMPORAL_UNITS
 
     if pa.types.is_time(data_type):
         return data_type.unit in _SAFE_TEMPORAL_UNITS
@@ -69,6 +69,15 @@ def _numpy_safe(data_type: Any) -> bool:
     )
 
 
+def _timestamp_to_pylist(column: Any) -> list[datetime.datetime]:
+    values = cast(list[datetime.datetime], column.to_numpy(zero_copy_only=False).tolist())
+    timezone = cast(datetime.tzinfo, cast(Any, pa).lib.string_to_tzinfo(column.type.tz))
+    if timezone.utcoffset(None) == datetime.timedelta(0):
+        return [value.replace(tzinfo=timezone) for value in values]
+
+    return [value.replace(tzinfo=datetime.UTC).astimezone(timezone) for value in values]
+
+
 def column_to_pylist(column: Any) -> list[Any]:
     """Convert one :class:`pyarrow.Array` to Python objects.
 
@@ -77,7 +86,11 @@ def column_to_pylist(column: Any) -> list[Any]:
     """
     nulls_change_values = column.null_count and (pa.types.is_integer(column.type) or pa.types.is_floating(column.type))
     tiny_scalar_batch = len(column) == 1 and not pa.types.is_temporal(column.type)
-    if tiny_scalar_batch or nulls_change_values or not _numpy_safe(column.type):
+    timestamp_with_timezone = bool(pa.types.is_timestamp(column.type) and column.type.tz is not None)
+    if timestamp_with_timezone and not column.null_count and _numpy_safe(column.type):
+        return cast(list[Any], _timestamp_to_pylist(column))
+
+    if tiny_scalar_batch or nulls_change_values or timestamp_with_timezone or not _numpy_safe(column.type):
         return cast(list[Any], column.to_pylist())
 
     return cast(list[Any], column.to_numpy(zero_copy_only=False).tolist())
@@ -85,4 +98,10 @@ def column_to_pylist(column: Any) -> list[Any]:
 
 def batch_to_rows(batch: Any) -> list[tuple[Any, ...]]:
     """Convert a :class:`pyarrow.RecordBatch` to row tuples, one column at a time."""
-    return list(zip(*(column_to_pylist(column) for column in batch.columns), strict=True))
+    columns: list[list[Any]] = []
+    for field, column in zip(batch.schema, batch.columns, strict=True):
+        values = column_to_pylist(column)
+        if field.metadata and field.metadata.get(_ARROW_EXTENSION_NAME) == _MONETDB_HUGEINT_EXTENSION:
+            values = [None if value is None else int(value) for value in values]
+        columns.append(values)
+    return list(zip(*columns, strict=True))

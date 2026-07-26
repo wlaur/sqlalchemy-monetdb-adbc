@@ -1,18 +1,25 @@
 from collections.abc import Sequence
-from datetime import UTC
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from numbers import Integral, Real
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 import pyarrow as pa
 from pydantic import BaseModel
 from sqlalchemy import types as sqltypes
 from sqlalchemy.engine.interfaces import Dialect
-from sqlalchemy.sql.type_api import (
-    _BindProcessorType,  # pyright: ignore[reportPrivateUsage]
-    _LiteralProcessorType,  # pyright: ignore[reportPrivateUsage]
-    _ResultProcessorType,  # pyright: ignore[reportPrivateUsage]
-)
+
+
+class BindProcessor(Protocol):
+    def __call__(self, value: Any) -> Any: ...
+
+
+class LiteralProcessor(Protocol):
+    def __call__(self, value: Any) -> str: ...
+
+
+class ResultProcessor(Protocol):
+    def __call__(self, value: Any) -> Any: ...
 
 
 def _json_path(value: Any) -> str:
@@ -28,7 +35,7 @@ def _json_path(value: Any) -> str:
 
 
 class _MonetDBJSONPathBase:
-    def _path_processor(self, super_proc: _BindProcessorType[str] | None) -> _BindProcessorType[Any]:
+    def _path_processor(self, super_proc: BindProcessor | None) -> BindProcessor:
         def process(value: Any) -> Any:
             rendered = value if isinstance(value, str) and value.startswith("$") else _json_path(value)
             if super_proc:
@@ -39,18 +46,18 @@ class _MonetDBJSONPathBase:
 
 
 class MonetDBJSONPathType(_MonetDBJSONPathBase, sqltypes.JSON.JSONPathType):
-    def bind_processor(self, dialect: Dialect) -> _BindProcessorType[Any]:
+    def bind_processor(self, dialect: Dialect) -> BindProcessor:
         return self._path_processor(self.string_bind_processor(dialect))
 
-    def literal_processor(self, dialect: Dialect) -> _LiteralProcessorType[Any]:
+    def literal_processor(self, dialect: Dialect) -> LiteralProcessor:
         return self._path_processor(self.string_literal_processor(dialect))
 
 
 class MonetDBJSONIndexType(_MonetDBJSONPathBase, sqltypes.JSON.JSONIndexType):
-    def bind_processor(self, dialect: Dialect) -> _BindProcessorType[Any]:
+    def bind_processor(self, dialect: Dialect) -> BindProcessor:
         return self._path_processor(self.string_bind_processor(dialect))
 
-    def literal_processor(self, dialect: Dialect) -> _LiteralProcessorType[Any]:
+    def literal_processor(self, dialect: Dialect) -> LiteralProcessor:
         return self._path_processor(self.string_literal_processor(dialect))
 
 
@@ -62,7 +69,7 @@ class MonetDBFloat(sqltypes.Float[Any]):
     column) fails inference. Coercing here keeps the column uniformly double.
     """
 
-    def bind_processor(self, dialect: Dialect) -> _BindProcessorType[Any]:
+    def bind_processor(self, dialect: Dialect) -> BindProcessor:
         def process(value: Any) -> Any:
             if isinstance(value, Decimal):
                 return float(value)
@@ -78,7 +85,18 @@ class MonetDBTime(sqltypes.Time):
     driver returns a naive time. Reattach UTC for a timezone-aware column.
     """
 
-    def result_processor(self, dialect: Dialect, coltype: Any) -> Any:
+    def bind_processor(self, dialect: Dialect) -> BindProcessor | None:
+        if not self.timezone:
+            return None
+
+        def process(value: Any) -> Any:
+            if value is None or value.tzinfo is None or value.utcoffset() is None:
+                return value
+            return datetime.combine(date(2000, 1, 1), value).astimezone(UTC).time()
+
+        return process
+
+    def result_processor(self, dialect: Dialect, coltype: Any) -> ResultProcessor | None:
         if not self.timezone:
             return None
 
@@ -100,7 +118,7 @@ class MonetDBNumeric(sqltypes.Numeric[Any]):
     says a Numeric column yields Decimal.
     """
 
-    def bind_processor(self, dialect: Dialect) -> _BindProcessorType[Any]:
+    def bind_processor(self, dialect: Dialect) -> BindProcessor:
         as_decimal = self.asdecimal
 
         def process(value: Any) -> Any:
@@ -129,7 +147,7 @@ class MonetDBNumeric(sqltypes.Numeric[Any]):
 
         return process
 
-    def result_processor(self, dialect: Dialect, coltype: Any) -> _ResultProcessorType[Any] | None:
+    def result_processor(self, dialect: Dialect, coltype: Any) -> ResultProcessor | None:
         if not self.asdecimal:
             if cast(Any, pa.types).is_floating(coltype):
                 return None
@@ -242,13 +260,13 @@ class PydanticJSON[ModelT: BaseModel](sqltypes.TypeDecorator[ModelT]):
     def __repr__(self) -> str:
         return f"{type(self).__name__}({self.model.__name__})"
 
-    def bind_processor(self, dialect: Dialect) -> _BindProcessorType[ModelT]:
+    def bind_processor(self, dialect: Dialect) -> BindProcessor:
         def process(value: ModelT | None) -> Any:
             return None if value is None else value.model_dump_json()
 
         return process
 
-    def result_processor(self, dialect: Dialect, coltype: Any) -> _ResultProcessorType[ModelT]:
+    def result_processor(self, dialect: Dialect, coltype: Any) -> ResultProcessor:
         model = self.model
 
         def process(value: Any) -> ModelT | None:

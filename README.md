@@ -10,7 +10,7 @@ or `sqlalchemy-monetdb`.
 ## Status
 
 The dialect covers SQL compilation, types, reflection, transactions, and the ORM,
-and is validated against a live MonetDB server. It is not released to PyPI yet.
+and is validated against a live MonetDB server.
 
 ### Dialect compliance suite
 
@@ -39,7 +39,7 @@ Regular expression matching is not available: MonetDB's `~` is `mbr_contains`,
 a geometry operator, so `regexp_match()` raises rather than producing SQL that
 means something else. `regexp_replace()` works.
 
-The dialect requires `adbc-driver-monetdb` 0.8.4 or newer, which reports
+The dialect requires `adbc-driver-monetdb` 0.8.5 or newer, which reports
 truthful row counts, exports the PEP 249 `Binary` constructor, caches
 prepared statements per connection, executes one-row bound DML without a
 savepoint, and returns small results from MonetDB's initial reply. One
@@ -79,10 +79,16 @@ set, and SQLAlchemy needs `None` to decide that a statement returned no rows.
 - A `UNIQUE` constraint is backed by an index of the same name, so it is
   reflected both by `get_unique_constraints()` and by `get_indexes()`.
 
-## Development installation
+## Installation
 
 ```console
-uv add git+https://github.com/wlaur/sqlalchemy-monetdb-adbc
+uv add sqlalchemy-monetdb-adbc
+```
+
+Or with Python's standard package installer:
+
+```console
+python -m pip install sqlalchemy-monetdb-adbc
 ```
 
 ## Usage
@@ -119,19 +125,16 @@ engine = create_engine(
 
 Rows are converted to Python objects only if you ask for them, and that
 conversion is done a column at a time through numpy rather than element by
-element: a 50k-row read spends about 2ms on the wire and 9ms becoming Python
-objects, where the obvious `to_pylist()` would spend 28ms. Ordinary row-returning
-queries with meaningful result sizes are consequently faster here than through
-pymonetdb.
+element. Ordinary row-returning queries with meaningful result sizes avoid
+per-cell Arrow scalar boxing.
 
-Driver 0.8.4 removes the two avoidable fixed costs found in the release review:
+Driver 0.8.5 removes the avoidable fixed costs found in the release review:
 one-row parameterized DML no longer adds a savepoint pair, and results of up to
-100 rows no longer force a second fetch. Tiny row-oriented SELECTs can still be
-slower than pymonetdb. pymonetdb constructs Python tuples directly, while this
-dialect receives a canonical Arrow stream across the native boundary and then
-converts its columns to SQLAlchemy rows. Removing that fixed Arrow/FFI work
-would require bypassing the ADBC result contract; use the Arrow helpers below
-when it matters.
+100 rows no longer force a second fetch. The driver also batches `executemany`
+parameters into one multi-row statement when MonetDB can preserve the DB-API
+semantics. Tiny row-oriented SELECTs still carry the fixed cost of receiving a
+canonical Arrow stream across the native boundary; use the Arrow helpers below
+when keeping the result columnar matters.
 
 To skip the conversion entirely and keep data columnar, run the query on the
 same connection and take Arrow back:
@@ -161,9 +164,6 @@ with it. Use them rather than opening a second connection with
 A SQLAlchemy statement is compiled for you, bind parameters included; a plain
 SQL string works too. `raw_adbc_connection()` returns the underlying ADBC
 connection if you need the driver API directly.
-
-Reading 50,000 rows as Arrow takes about 7 ms, against about 40 ms to build
-Python objects from the same result.
 
 The driver prefetches large results by default. Closing a partially consumed
 result—such as calling `.first()`—waits briefly and then lets an in-flight fetch
@@ -252,10 +252,9 @@ article: Article = session.scalars(select(Article)).one()
 article.content.title  # Content instance, never a dict
 ```
 
-Reading 1,000 documents of ~10 KB is 2.4x faster this way than deserializing to
-`dict` and validating afterwards (23.9 ms versus 58.2 ms). A plain `JSON` column
-cannot avoid the dict: by the time the attribute is read, SQLAlchemy has already
-deserialized and the original text is gone.
+This avoids deserializing to an intermediate `dict` before validation. A plain
+`JSON` column cannot avoid the dict: by the time the attribute is read,
+SQLAlchemy has already deserialized and the original text is gone.
 
 #### Declare the model frozen
 
