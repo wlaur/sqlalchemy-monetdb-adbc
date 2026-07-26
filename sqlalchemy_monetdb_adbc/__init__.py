@@ -1,6 +1,6 @@
 from importlib.metadata import PackageNotFoundError, version
 
-from sqlalchemy_monetdb_adbc.arrow import fetch_arrow_table, fetch_record_batches, ingest_arrow
+from sqlalchemy_monetdb_adbc.arrow import fetch_arrow_table, ingest_arrow, open_arrow_batch_reader
 from sqlalchemy_monetdb_adbc.connection import raw_adbc_connection
 from sqlalchemy_monetdb_adbc.dialect import MonetDBADBCDialect
 from sqlalchemy_monetdb_adbc.types import (
@@ -31,7 +31,7 @@ __all__ = [
     "PydanticJSON",
     "__version__",
     "fetch_arrow_table",
-    "fetch_record_batches",
     "ingest_arrow",
+    "open_arrow_batch_reader",
     "raw_adbc_connection",
 ]

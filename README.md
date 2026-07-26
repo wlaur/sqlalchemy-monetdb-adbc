@@ -127,19 +127,27 @@ conversion is done a column at a time through NumPy rather than element by
 element. Ordinary row-returning queries with meaningful result sizes avoid
 per-cell Arrow scalar boxing.
 
-Driver 0.8.5 removes the avoidable fixed costs found in the release review:
+NumPy is a runtime dependency only for this optimized Arrow-to-Python object
+conversion. Arrow-native reads and writes do not convert through NumPy.
+
+Driver 0.8.6 removes the avoidable fixed costs found in the release review:
 one-row parameterized DML no longer adds a savepoint pair, and results of up to
 100 rows no longer force a second fetch. The driver also batches `executemany`
 parameters into one multi-row statement when MonetDB can preserve the DB-API
-semantics. Tiny row-oriented SELECTs still carry the fixed cost of receiving a
-canonical Arrow stream across the native boundary; use the Arrow helpers below
-when keeping the result columnar matters.
+semantics, and repeated single-batch appends no longer create redundant
+savepoints. Tiny row-oriented SELECTs still carry the fixed cost of receiving
+a canonical Arrow stream across the native boundary; use the Arrow helpers
+below when keeping the result columnar matters.
 
 To skip the conversion entirely and keep data columnar, run the query on the
 same connection and take Arrow back:
 
 ```python
-from sqlalchemy_monetdb_adbc import fetch_arrow_table, fetch_record_batches, ingest_arrow
+from sqlalchemy_monetdb_adbc import (
+    fetch_arrow_table,
+    ingest_arrow,
+    open_arrow_batch_reader,
+)
 
 statement = select(trades.c.id, trades.c.symbol).where(trades.c.symbol == "AAPL")
 
@@ -148,7 +156,7 @@ with Session(engine) as session:
     df = polars.from_arrow(table)
 
     # streaming, for results that should not be materialized at once
-    with fetch_record_batches(session.connection(), statement) as reader:
+    with open_arrow_batch_reader(session.connection(), statement) as reader:
         for batch in reader:
             ...
 
@@ -158,6 +166,10 @@ with Session(engine) as session:
 These run on the ADBC session backing the SQLAlchemy connection, so they see
 that connection's uncommitted work, take part in its transaction, and roll back
 with it.
+
+For a large incremental write, pass one `pyarrow.RecordBatchReader` to one
+`ingest_arrow` call. The reader remains streaming while the driver keeps one
+operation-level transaction scope.
 
 `polars.read_database` can use that same session too. Pass it the underlying
 ADBC connection owned by SQLAlchemy:

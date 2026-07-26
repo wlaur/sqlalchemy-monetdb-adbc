@@ -37,6 +37,7 @@ dependencies = [
 dev = [
     "alembic>=1.14",
     "polars>=1.32",
+    "pyarrow-stubs>=20.0.0.20260625",
     "pymonetdb>=1.9",
     "pyright",
     "pytest>=9",
@@ -112,8 +113,6 @@ include = ["sqlalchemy_monetdb_adbc", "tests", "packaging"]
 venvPath = "."
 venv = ".venv"
 typeCheckingMode = "strict"
-# pyarrow ships no type stubs; the Arrow helpers are typed against it anyway.
-reportMissingTypeStubs = false
 reportUnnecessaryTypeIgnoreComment = "error"
 useLibraryCodeForTypes = true
 enableTypeIgnoreComments = false
@@ -128,8 +127,8 @@ markers = [
     "integration: requires a running MonetDB server (set MONETDB_TEST_URI)",
 ]
 
-# pyarrow ships no type stubs. The dialect imports it in _convert.py and
-# arrow.py, which annotate Arrow objects as Any; the tests exercise both.
+# PyArrow's dynamic extension and conversion APIs exceed the third-party
+# stubs; integration tests exercise those runtime surfaces directly.
 [[tool.pyright.executionEnvironments]]
 root = "tests"
 reportMissingTypeStubs = false

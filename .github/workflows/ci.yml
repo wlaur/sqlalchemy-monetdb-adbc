@@ -64,6 +64,8 @@ jobs:
         env:
           MDB_DB_ADMIN_PASS: monetdb
           MDB_CREATE_DBS: test
+        options: >-
+          --tmpfs /var/monetdb5/dbfarm:rw,size=2147483648,mode=0777
     env:
       MONETDB_TEST_URI: monetdb://monetdb:monetdb@localhost:50000/test
     steps:

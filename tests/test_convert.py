@@ -21,8 +21,8 @@ AWARE = NAIVE.replace(tzinfo=datetime.UTC)
 ROWS = 64
 
 
-# pyarrow ships no type information, so Arrow objects are annotated Any, as
-# the dialect does in arrow.py and _convert.py.
+# These parameterized cases include PyArrow types that remain dynamic in the
+# third-party stubs.
 def _repeat(value: object, data_type: Any) -> Any:
     """Build a single-value pyarrow.Array of the given type."""
     return pa.array([value] * ROWS, data_type)
@@ -121,7 +121,7 @@ def test_single_scalar_batch_skips_numpy_setup() -> None:
             return [7]
 
         def to_numpy(self, *, zero_copy_only: bool) -> Any:
-            raise AssertionError("single scalar batches should not use numpy")
+            raise AssertionError("single scalar batches should not use NumPy")
 
     assert column_to_pylist(SingleValueColumn()) == [7]
 

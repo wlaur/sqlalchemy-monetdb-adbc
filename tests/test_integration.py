@@ -51,8 +51,8 @@ from sqlalchemy_monetdb_adbc import (
     HUGEINT,
     PydanticJSON,
     fetch_arrow_table,
-    fetch_record_batches,
     ingest_arrow,
+    open_arrow_batch_reader,
     raw_adbc_connection,
 )
 from sqlalchemy_monetdb_adbc.base import RESERVED_WORDS
@@ -254,6 +254,169 @@ def test_polars_read_database_shares_the_sqlalchemy_transaction(engine: Engine) 
 
     with engine.connect() as connection:
         assert connection.scalar(select(func.count()).select_from(table)) == 0
+
+
+def test_arrow_helpers_establish_sqlalchemy_transaction_ownership(engine: Engine) -> None:
+    import pyarrow as pa
+
+    data = pa.table({"id": pa.array([1, 2], type=pa.int64())})
+
+    with engine.connect() as connection:
+        assert not connection.in_transaction()
+        assert ingest_arrow(connection, "arrow_autobegin_commit", data, mode="create") == 2
+        assert connection.in_transaction()
+        assert connection.exec_driver_sql("SELECT COUNT(*) FROM arrow_autobegin_commit").scalar_one() == 2
+        connection.commit()
+        assert not connection.in_transaction()
+
+        result = fetch_arrow_table(connection, "SELECT id FROM arrow_autobegin_commit ORDER BY id")
+        assert result.column("id").to_pylist() == [1, 2]
+        assert connection.in_transaction()
+        connection.rollback()
+
+        assert not connection.in_transaction()
+        with open_arrow_batch_reader(connection, "SELECT id FROM arrow_autobegin_commit ORDER BY id") as reader:
+            assert [value.as_py() for batch in reader for value in batch.column(0)] == [1, 2]
+        assert connection.in_transaction()
+        connection.rollback()
+
+    with engine.connect() as connection:
+        assert connection.exec_driver_sql("SELECT COUNT(*) FROM arrow_autobegin_commit").scalar_one() == 2
+
+
+def test_arrow_helper_rollback_and_pool_return_undo_raw_work(engine: Engine) -> None:
+    import pyarrow as pa
+
+    data = pa.table({"id": pa.array([1], type=pa.int64())})
+
+    with engine.connect() as connection:
+        assert ingest_arrow(connection, "arrow_autobegin_rollback", data, mode="create") == 1
+        connection.rollback()
+
+    with engine.connect() as connection:
+        assert (
+            connection.exec_driver_sql(
+                "SELECT COUNT(*) FROM sys.tables WHERE name = 'arrow_autobegin_rollback'"
+            ).scalar_one()
+            == 0
+        )
+        connection.rollback()
+
+    with engine.connect() as connection:
+        assert ingest_arrow(connection, "arrow_pool_return_rollback", data, mode="create") == 1
+
+    with engine.connect() as connection:
+        assert (
+            connection.exec_driver_sql(
+                "SELECT COUNT(*) FROM sys.tables WHERE name = 'arrow_pool_return_rollback'"
+            ).scalar_one()
+            == 0
+        )
+
+
+def test_ingest_arrow_supports_temporary_tables_and_merge(engine: Engine) -> None:
+    import pyarrow as pa
+
+    created = pa.table(
+        {
+            "id": pa.array([1, 2], type=pa.int64()),
+            "label": pa.array(["created-a", "created-b"], type=pa.string()),
+        }
+    )
+    staged = pa.table(
+        {
+            "id": pa.array([1, 3], type=pa.int64()),
+            "label": pa.array(["updated", "inserted"], type=pa.string()),
+        }
+    )
+
+    with engine.connect() as connection:
+        assert (
+            ingest_arrow(
+                connection,
+                "arrow_created_temporary",
+                created,
+                mode="create",
+                temporary=True,
+            )
+            == 2
+        )
+        connection.commit()
+        assert connection.exec_driver_sql("SELECT id, label FROM arrow_created_temporary ORDER BY id").all() == [
+            (1, "created-a"),
+            (2, "created-b"),
+        ]
+        connection.exec_driver_sql("DROP TABLE tmp.arrow_created_temporary")
+        connection.commit()
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql("CREATE TABLE arrow_merge_target(id BIGINT PRIMARY KEY, label CLOB NOT NULL)")
+        connection.exec_driver_sql("INSERT INTO arrow_merge_target VALUES (1, 'original')")
+        connection.exec_driver_sql(
+            "CREATE LOCAL TEMPORARY TABLE arrow_merge_stage(id BIGINT PRIMARY KEY, label CLOB NOT NULL)"
+        )
+        assert (
+            ingest_arrow(
+                connection,
+                "arrow_merge_stage",
+                staged,
+                mode="append",
+                temporary=True,
+            )
+            == 2
+        )
+        assert connection.exec_driver_sql("SELECT COUNT(*) FROM arrow_merge_stage").scalar_one() == 2
+        connection.exec_driver_sql(
+            "MERGE INTO arrow_merge_target AS target "
+            "USING arrow_merge_stage AS stage ON target.id = stage.id "
+            "WHEN MATCHED THEN UPDATE SET label = stage.label "
+            "WHEN NOT MATCHED THEN INSERT (id, label) VALUES (stage.id, stage.label)"
+        )
+        assert connection.exec_driver_sql("SELECT id, label FROM arrow_merge_target ORDER BY id").all() == [
+            (1, "updated"),
+            (3, "inserted"),
+        ]
+        connection.exec_driver_sql("DROP TABLE tmp.arrow_merge_stage")
+
+
+def test_ingest_arrow_rejects_temporary_schema_combination(engine: Engine) -> None:
+    import pyarrow as pa
+
+    with (
+        engine.connect() as connection,
+        pytest.raises(
+            adbc_driver_manager.ProgrammingError,
+            match="temporary ingestion cannot specify a schema",
+        ),
+    ):
+        ingest_arrow(
+            connection,
+            "invalid_temporary_schema",
+            pa.table({"id": pa.array([1], type=pa.int64())}),
+            mode="create",
+            schema_name="tmp",
+            temporary=True,
+        )
+
+
+def test_ingest_arrow_streams_one_record_batch_reader_in_the_sqlalchemy_transaction(
+    engine: Engine,
+) -> None:
+    import pyarrow as pa
+
+    batches = [
+        pa.record_batch({"id": pa.array([1, 2], type=pa.int64())}),
+        pa.record_batch({"id": pa.array([3, 4], type=pa.int64())}),
+    ]
+    reader = pa.RecordBatchReader.from_batches(batches[0].schema, batches)
+
+    with engine.connect() as connection:
+        assert ingest_arrow(connection, "arrow_reader_ingest", reader, mode="create") == 4
+        assert connection.exec_driver_sql("SELECT COUNT(*) FROM arrow_reader_ingest").scalar_one() == 4
+        connection.commit()
+
+    with engine.connect() as connection:
+        assert connection.exec_driver_sql("SELECT SUM(id) FROM arrow_reader_ingest").scalar_one() == 10
 
 
 def test_rollback_discards_sqlalchemy_and_arrow_writes(engine: Engine) -> None:
@@ -864,7 +1027,7 @@ def test_arrow_helpers_run_on_the_sqlalchemy_transaction(engine: Engine) -> None
         expanded = select(table.c.id).where(table.c.id.in_([1, 3, 5])).order_by(table.c.id)
         assert fetch_arrow_table(session.connection(), expanded).column("id").to_pylist() == [1, 3, 5]
 
-        with fetch_record_batches(session.connection(), statement) as reader:
+        with open_arrow_batch_reader(session.connection(), statement) as reader:
             assert sum(batch.num_rows for batch in reader) == 50
 
         assert ingest_arrow(session.connection(), "arrow_helpers", arrow_table, mode="append") == 50
