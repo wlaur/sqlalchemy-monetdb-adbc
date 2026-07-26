@@ -61,12 +61,18 @@ def verify_artifacts(path: Path, version: str) -> None:
     missing = source_files - wheel_files
     if missing:
         raise ValueError(f"wheel is missing package files: {sorted(missing)}")
+    tracked_files = set(_git(path.parent, "ls-files").stdout.splitlines())
     with tarfile.open(path / f"{prefix}.tar.gz") as archive:
-        members = archive.getnames()
-    forbidden = {"MONETDB_ISSUE.md", "REVIEW.md", "benchmarks"}
-    leaked = [member for member in members if len(parts := Path(member).parts) > 1 and parts[1] in forbidden]
-    if leaked:
-        raise ValueError(f"sdist contains private or local-only files: {leaked}")
+        unexpected = [
+            member.name
+            for member in archive.getmembers()
+            if member.isfile()
+            and len(parts := Path(member.name).parts) > 1
+            and (relative := Path(*parts[1:]).as_posix()) != "PKG-INFO"
+            and relative not in tracked_files
+        ]
+    if unexpected:
+        raise ValueError(f"sdist contains untracked source files: {unexpected}")
 
 
 def main() -> None:
