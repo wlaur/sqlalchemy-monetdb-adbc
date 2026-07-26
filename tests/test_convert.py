@@ -69,7 +69,7 @@ CASES: list[tuple[str, Any]] = [
     ("large_binary", _repeat(b"\x00\xff", pa.large_binary())),
     ("decimal128", _repeat(decimal.Decimal("-1.2345"), pa.decimal128(18, 4))),
     ("decimal256", _repeat(decimal.Decimal("1.2345"), pa.decimal256(40, 8))),
-    # Nulls force the fallback on every path.
+    # Integer/float nulls require fallback; other scalar types remain exact.
     ("null type", _repeat(None, pa.null())),
     ("int32 null", pa.array([1, None] * (ROWS // 2), pa.int32())),
     ("float64 null", pa.array([1.5, None] * (ROWS // 2), pa.float64())),
@@ -107,6 +107,23 @@ def test_sliced_offset_is_not_ignored() -> None:
     column = pa.array(list(range(100)), pa.int32()).slice(10, 5)
 
     assert column_to_pylist(column) == [10, 11, 12, 13, 14]
+
+
+def test_single_scalar_batch_skips_numpy_setup() -> None:
+    class SingleValueColumn:
+        type = pa.int64()
+        null_count = 0
+
+        def __len__(self) -> int:
+            return 1
+
+        def to_pylist(self) -> list[int]:
+            return [7]
+
+        def to_numpy(self, *, zero_copy_only: bool) -> Any:
+            raise AssertionError("single scalar batches should not use numpy")
+
+    assert column_to_pylist(SingleValueColumn()) == [7]
 
 
 def test_batch_to_rows_transposes_columns() -> None:

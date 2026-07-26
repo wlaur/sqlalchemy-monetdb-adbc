@@ -1,8 +1,10 @@
 from collections.abc import Sequence
 from datetime import UTC
 from decimal import Decimal
+from numbers import Integral, Real
 from typing import Any, cast
 
+import pyarrow as pa
 from pydantic import BaseModel
 from sqlalchemy import types as sqltypes
 from sqlalchemy.engine.interfaces import Dialect
@@ -113,23 +115,32 @@ class MonetDBNumeric(sqltypes.Numeric[Any]):
             # normalise here rather than leave it to the caller.
             if value is None:
                 return None
+            if isinstance(value, bool):
+                return value
             if as_decimal:
-                if isinstance(value, bool) or not isinstance(value, float | int):
+                if isinstance(value, Integral):
+                    return Decimal(int(value))
+                if not isinstance(value, Real):
                     return value
                 # str() first: Decimal(15.7563) would carry the full binary
                 # expansion of the float rather than the value that was written.
                 return Decimal(str(value))
-            return float(value) if isinstance(value, Decimal) else value
+            return float(value) if isinstance(value, Decimal | Real) else value
 
         return process
 
     def result_processor(self, dialect: Dialect, coltype: Any) -> _ResultProcessorType[Any] | None:
         if not self.asdecimal:
+            if cast(Any, pa.types).is_floating(coltype):
+                return None
 
             def to_float(value: Any) -> Any:
                 return float(value) if isinstance(value, Decimal) else value
 
             return to_float
+
+        if cast(Any, pa.types).is_decimal(coltype):
+            return None
 
         scale = self._effective_decimal_return_scale
 

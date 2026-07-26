@@ -2,6 +2,7 @@ from collections.abc import Callable
 from collections.abc import Sequence as AbstractSequence
 from typing import Any, cast
 
+import pyarrow as pa
 from sqlalchemy.engine import default
 from sqlalchemy.engine.interfaces import DBAPICursor
 from sqlalchemy.sql import compiler
@@ -9,6 +10,10 @@ from sqlalchemy.sql.schema import Sequence
 from sqlalchemy.sql.type_api import TypeEngine
 
 from ._convert import batch_to_rows
+
+record_batch = cast(Callable[..., Any], cast(Any, pa).record_batch)
+ArrowInvalidError = cast(type[Exception], cast(Any, pa).ArrowInvalid)
+ArrowTypeError = cast(type[Exception], cast(Any, pa).ArrowTypeError)
 
 RESERVED_WORDS = frozenset(
     {
@@ -343,14 +348,13 @@ class MonetDBCursor:
        ``yield_per`` keep working.
     """
 
-    __slots__ = ("_batch", "_cursor", "_index", "_reader", "close", "executemany")
+    __slots__ = ("_batch", "_cursor", "_index", "_reader", "close")
 
     def __init__(self, cursor: Any) -> None:
         self._cursor = cursor
         self._reader: Any = None
         self._batch: list[tuple[Any, ...]] = []
         self._index = 0
-        self.executemany: Callable[..., Any] = cursor.executemany
         self.close: Callable[[], None] = cursor.close
 
     def _reset(self) -> None:
@@ -361,6 +365,39 @@ class MonetDBCursor:
     def execute(self, operation: str, parameters: Any = None) -> Any:
         self._reset()
         return self._cursor.execute(operation, parameters)
+
+    def executemany(self, operation: str, seq_of_parameters: Any) -> Any:
+        self._reset()
+        return self._cursor.executemany(operation, seq_of_parameters)
+
+    def execute_with_parameter_schema(
+        self,
+        operation: str,
+        parameters: Any,
+        schema: Any,
+    ) -> tuple[Any, Any | None]:
+        self._reset()
+        batch = parameter_record_batch([parameters], schema)
+        if batch is None:
+            return self._cursor.execute(operation, parameters), None
+        return self._cursor.execute(operation, batch), batch.schema
+
+    def executemany_with_parameter_schema(
+        self,
+        operation: str,
+        seq_of_parameters: Any,
+        schema: Any,
+    ) -> tuple[Any, Any | None]:
+        self._reset()
+        if not isinstance(seq_of_parameters, AbstractSequence):
+            return self._cursor.executemany(operation, seq_of_parameters), None
+        batch = parameter_record_batch(
+            cast(AbstractSequence[Any], seq_of_parameters),
+            schema,
+        )
+        if batch is None:
+            return self._cursor.executemany(operation, seq_of_parameters), None
+        return self._cursor.executemany(operation, batch), batch.schema
 
     def _next_batch(self) -> bool:
         """Buffer the next record batch as tuples. False when exhausted."""
@@ -391,10 +428,11 @@ class MonetDBCursor:
         count = int(self._cursor.arraysize) if size is None else size
         rows: list[tuple[Any, ...]] = []
         while len(rows) < count:
-            row = self.fetchone()
-            if row is None:
+            if self._index >= len(self._batch) and not self._next_batch():
                 break
-            rows.append(row)
+            take = min(count - len(rows), len(self._batch) - self._index)
+            rows.extend(self._batch[self._index : self._index + take])
+            self._index += take
         return rows
 
     def fetchall(self) -> list[tuple[Any, ...]]:
@@ -414,11 +452,38 @@ class MonetDBCursor:
         return self._cursor.rowcount
 
     @property
+    def arraysize(self) -> int:
+        return int(self._cursor.arraysize)
+
+    @arraysize.setter
+    def arraysize(self, value: int) -> None:
+        self._cursor.arraysize = value
+
+    @property
     def adbc_cursor(self) -> Any:
         return self._cursor
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._cursor, name)
+
+
+def parameter_record_batch(rows: AbstractSequence[Any], schema: Any) -> Any | None:
+    if not rows or not all(
+        isinstance(row, AbstractSequence) and not isinstance(row, (str, bytes, bytearray)) for row in rows
+    ):
+        return None
+    width = len(rows[0])
+    if width == 0:
+        return None
+    if any(len(row) != width for row in rows):
+        return None
+    columns = [[row[index] for row in rows] for index in range(width)]
+    if schema is None:
+        return record_batch(columns, names=[str(index) for index in range(width)])
+    try:
+        return record_batch(columns, schema=schema)
+    except (ArrowInvalidError, ArrowTypeError):
+        return record_batch(columns, names=[str(index) for index in range(width)])
 
 
 class MonetDBExecutionContext(default.DefaultExecutionContext):
