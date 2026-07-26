@@ -36,6 +36,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "alembic>=1.14",
+    "polars>=1.32",
     "pymonetdb>=1.9",
     "pyright",
     "pytest>=9",

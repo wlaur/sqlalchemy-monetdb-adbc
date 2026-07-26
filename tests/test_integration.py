@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy import (
     JSON,
     TIMESTAMP,
+    BigInteger,
     Boolean,
     CheckConstraint,
     Column,
@@ -34,6 +35,7 @@ from sqlalchemy import (
     Uuid,
     delete,
     exc,
+    func,
     insert,
     inspect,
     literal,
@@ -219,6 +221,39 @@ def test_raw_adbc_connection_shares_the_sqlalchemy_transaction(engine: Engine) -
             (2, "arrow-a"),
             (3, "arrow-b"),
         ]
+
+
+def test_polars_read_database_shares_the_sqlalchemy_transaction(engine: Engine) -> None:
+    import polars as pl
+
+    metadata = MetaData()
+    table = Table("polars_target", metadata, Column("id", BigInteger), Column("label", String(20)))
+    metadata.create_all(engine)
+
+    with Session(engine) as session:
+        session.execute(insert(table), {"id": 1, "label": "uncommitted"})
+        assert (
+            ingest_arrow(
+                session.connection(),
+                table.name,
+                pl.DataFrame({"id": [2], "label": ["polars"]}),
+                mode="append",
+            )
+            == 1
+        )
+        frame = pl.read_database(
+            query="SELECT id, label FROM polars_target ORDER BY id",
+            connection=raw_adbc_connection(session.connection()),
+        )
+
+        assert frame.to_dicts() == [
+            {"id": 1, "label": "uncommitted"},
+            {"id": 2, "label": "polars"},
+        ]
+        session.rollback()
+
+    with engine.connect() as connection:
+        assert connection.scalar(select(func.count()).select_from(table)) == 0
 
 
 def test_rollback_discards_sqlalchemy_and_arrow_writes(engine: Engine) -> None:

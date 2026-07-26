@@ -157,8 +157,37 @@ with Session(engine) as session:
 
 These run on the ADBC session backing the SQLAlchemy connection, so they see
 that connection's uncommitted work, take part in its transaction, and roll back
-with it. Use them rather than opening a second connection with
-`polars.read_database`, which would be a separate session and transaction.
+with it.
+
+`polars.read_database` can use that same session too. Pass it the underlying
+ADBC connection owned by SQLAlchemy:
+
+```python
+from sqlalchemy_monetdb_adbc import raw_adbc_connection
+
+with Session(engine) as session:
+    session.execute(insert(trades), {"id": 1, "symbol": "AAPL"})
+
+    frame = polars.read_database(
+        query="SELECT id, symbol FROM trades ORDER BY id",
+        connection=raw_adbc_connection(session.connection()),
+    )
+
+    session.commit()
+```
+
+Do not close the returned ADBC connection or change its transaction state;
+SQLAlchemy owns both. Passing a URL to `polars.read_database` instead would
+open a separate session and would not see uncommitted work.
+
+Do not pass the raw ADBC connection to `DataFrame.write_database`: Polars'
+ADBC write path commits the connection after ingesting, which would also
+commit any pending SQLAlchemy work. Use the transaction-aware helper for
+columnar writes:
+
+```python
+ingest_arrow(session.connection(), "trades", frame, mode="append")
+```
 
 A SQLAlchemy statement is compiled for you, bind parameters included; a plain
 SQL string works too. `raw_adbc_connection()` returns the underlying ADBC
