@@ -33,14 +33,6 @@ KNOWN_FAILURES: Final[dict[str, str]] = {
     # '{"key1":"data1"}' for the '{"key1": "data1"}' that was sent. The test
     # asserts the custom deserializer receives the original text byte for byte.
     "JSONTest::test_round_trip_custom_json": "MonetDB normalises JSON text on storage",
-    # DRIVER: binding a parameter batch that mixes float and Decimal fails in
-    # pyarrow type inference, which takes the type from the first row:
-    # "Could not convert Decimal('2.5') ... tried to convert to double", and
-    # "int or Decimal object expected, got float" in the other order.
-    # Reproduces on the raw driver with executemany, no SQLAlchemy involved.
-    "NumericTest::test_numeric_as_decimal": (
-        "adbc-driver-monetdb cannot bind a parameter batch mixing float and Decimal"
-    ),
     # Dropping a table normally drops the sequence backing its AUTO_INCREMENT
     # column, and get_sequence_names already excludes sequences a column still
     # references. Some suite tables nonetheless leave a "seq_<id>" behind that
