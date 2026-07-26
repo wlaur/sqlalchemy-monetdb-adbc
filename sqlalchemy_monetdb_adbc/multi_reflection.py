@@ -68,8 +68,8 @@ class MonetDBMultiReflection:
         """Resolve the requested tables, and which of them are temporary.
 
         Temporary tables keep their keys and indexes in the "tmp" catalog
-        rather than "sys", so the two sets are queried separately. Reading
-        both with a UNION instead hangs MonetDB outright.
+        rather than "sys". Querying each catalog separately lets the common
+        case, where nothing temporary is in scope, skip "tmp" entirely.
         """
         types: list[int] = []
         if ObjectKind.TABLE in kind:
