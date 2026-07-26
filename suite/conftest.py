@@ -3,10 +3,10 @@ import re
 import pytest
 from sqlalchemy.dialects import registry
 
-registry.register("monetdb", "sqlalchemy_monetdb_adbc.dialect", "MonetDBADBCDialect")
-registry.register("monetdb.adbc", "sqlalchemy_monetdb_adbc.dialect", "MonetDBADBCDialect")
-registry.register("monetdbs", "sqlalchemy_monetdb_adbc.dialect", "MonetDBADBCDialect")
-registry.register("monetdbs.adbc", "sqlalchemy_monetdb_adbc.dialect", "MonetDBADBCDialect")
+from sqlalchemy_monetdb_adbc.constants import DIALECT_NAMES
+
+for dialect_name in DIALECT_NAMES:
+    registry.register(dialect_name, "sqlalchemy_monetdb_adbc.dialect", "MonetDBADBCDialect")
 
 from known_failures import KNOWN_FAILURES  # noqa: E402
 from sqlalchemy.testing.plugin.pytestplugin import *  # noqa: E402, F403

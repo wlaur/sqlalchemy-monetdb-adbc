@@ -39,13 +39,14 @@ Regular expression matching is not available: MonetDB's `~` is `mbr_contains`,
 a geometry operator, so `regexp_match()` raises rather than producing SQL that
 means something else. `regexp_replace()` works.
 
-The dialect requires `adbc-driver-monetdb` 0.8.3 or newer, which reports
-truthful row counts, exports the PEP 249 `Binary` constructor, and caches
-prepared statements per connection. One `DRIVER-WORKAROUND` remains in the
-source, for an upstream Apache arrow-adbc behavior: ADBC always returns an
-Arrow stream, so the DB-API layer reports an empty `description` rather than
-`None` for statements that produce no result set, and SQLAlchemy needs `None`
-to decide that a statement returned no rows.
+The dialect requires `adbc-driver-monetdb` 0.8.4 or newer, which reports
+truthful row counts, exports the PEP 249 `Binary` constructor, caches
+prepared statements per connection, executes one-row bound DML without a
+savepoint, and returns small results from MonetDB's initial reply. One
+`DRIVER-WORKAROUND` remains in the source for upstream Apache arrow-adbc
+behavior: ADBC always returns an Arrow stream, so the DB-API layer reports an
+empty `description` rather than `None` for statements that produce no result
+set, and SQLAlchemy needs `None` to decide that a statement returned no rows.
 
 ### MonetDB behaviors worth knowing
 
@@ -120,7 +121,17 @@ Rows are converted to Python objects only if you ask for them, and that
 conversion is done a column at a time through numpy rather than element by
 element: a 50k-row read spends about 2ms on the wire and 9ms becoming Python
 objects, where the obvious `to_pylist()` would spend 28ms. Ordinary row-returning
-queries are consequently faster here than through pymonetdb, not slower.
+queries with meaningful result sizes are consequently faster here than through
+pymonetdb.
+
+Driver 0.8.4 removes the two avoidable fixed costs found in the release review:
+one-row parameterized DML no longer adds a savepoint pair, and results of up to
+100 rows no longer force a second fetch. Tiny row-oriented SELECTs can still be
+slower than pymonetdb. pymonetdb constructs Python tuples directly, while this
+dialect receives a canonical Arrow stream across the native boundary and then
+converts its columns to SQLAlchemy rows. Removing that fixed Arrow/FFI work
+would require bypassing the ADBC result contract; use the Arrow helpers below
+when it matters.
 
 To skip the conversion entirely and keep data columnar, run the query on the
 same connection and take Arrow back:
@@ -153,6 +164,17 @@ connection if you need the driver API directly.
 
 Reading 50,000 rows as Arrow takes about 7 ms, against about 40 ms to build
 Python objects from the same result.
+
+The driver prefetches large results by default. Closing a partially consumed
+result—such as calling `.first()`—waits briefly and then lets an in-flight fetch
+finish without killing the pooled session. The next statement on that
+connection can wait for that fetch or its configured timeout. Set
+`read_prefetch=false` in the connection URI when prompt pool reuse matters more
+than fetch/decode overlap:
+
+```python
+engine = create_engine("monetdb://localhost/demo?read_prefetch=false")
+```
 
 ## JSON
 
@@ -284,7 +306,7 @@ Integration tests and the dialect compliance suite need a server. `compose.yaml`
 pins the same native ARM64 MonetDB image the driver is developed against:
 
 ```console
-docker compose up -d
+docker compose up --wait
 MONETDB_TEST_URI=monetdb://monetdb:monetdb@localhost:50001/test uv run pytest tests
 uv run pytest suite -o addopts=""
 docker compose down -v

@@ -36,6 +36,7 @@ from sqlalchemy import (
     text,
     update,
 )
+from sqlalchemy.engine import ObjectScope
 from sqlalchemy.exc import SAWarning
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
@@ -112,6 +113,56 @@ def test_self_referential_foreign_key(engine: Engine) -> None:
     assert len(foreign_keys) == 1
     assert foreign_keys[0]["referred_table"] == "tree"
     assert foreign_keys[0]["constrained_columns"] == ["parent_id"]
+
+
+def test_cross_schema_foreign_key_keeps_referred_schema(engine: Engine) -> None:
+    with engine.begin() as connection:
+        connection.exec_driver_sql("CREATE SCHEMA xfk_other")
+        try:
+            connection.exec_driver_sql("CREATE TABLE xfk_other.xfk_parent (id INTEGER PRIMARY KEY)")
+            connection.exec_driver_sql(
+                "CREATE TABLE xfk_child (id INTEGER PRIMARY KEY, "
+                "parent_id INTEGER REFERENCES xfk_other.xfk_parent (id))"
+            )
+
+            foreign_key = inspect(connection).get_foreign_keys("xfk_child")[0]
+            assert foreign_key["referred_schema"] == "xfk_other"
+            assert foreign_key["referred_table"] == "xfk_parent"
+
+            reflected = Table("xfk_child", MetaData(), autoload_with=connection)
+            target = next(iter(reflected.foreign_key_constraints)).referred_table
+            assert target.schema == "xfk_other"
+            assert target.name == "xfk_parent"
+        finally:
+            connection.exec_driver_sql("DROP TABLE IF EXISTS xfk_child")
+            connection.exec_driver_sql("DROP SCHEMA xfk_other CASCADE")
+
+
+def test_temporary_table_existence_constraints_and_name_collision(engine: Engine) -> None:
+    with engine.begin() as connection:
+        connection.exec_driver_sql("CREATE TABLE reflection_collision (permanent_value INTEGER)")
+        connection.exec_driver_sql(
+            "CREATE LOCAL TEMPORARY TABLE temp_probe "
+            "(value INTEGER, CONSTRAINT ck_temp_probe_positive CHECK (value > 0))"
+        )
+        connection.exec_driver_sql("CREATE LOCAL TEMPORARY TABLE reflection_collision (temporary_value INTEGER)")
+        try:
+            inspector = inspect(connection)
+            assert inspector.has_table("temp_probe")
+            assert [column["name"] for column in inspector.get_columns("temp_probe")] == ["value"]
+            assert [constraint["name"] for constraint in inspector.get_check_constraints("temp_probe")] == [
+                "ck_temp_probe_positive"
+            ]
+
+            assert [column["name"] for column in inspector.get_columns("reflection_collision")] == ["permanent_value"]
+            temporary = inspector.get_multi_columns(
+                scope=ObjectScope.TEMPORARY,
+                filter_names=["reflection_collision"],
+            )
+            assert [column["name"] for column in temporary[(None, "reflection_collision")]] == ["temporary_value"]
+        finally:
+            connection.exec_driver_sql("DROP TABLE tmp.temp_probe")
+            connection.exec_driver_sql("DROP TABLE tmp.reflection_collision")
 
 
 def test_statements_without_a_result_set_do_not_return_rows(engine: Engine) -> None:
@@ -494,7 +545,6 @@ def test_json_path_indexing(engine: Engine) -> None:
         connection.execute(insert(table), [{"id": 1, "doc": document}])
 
     with engine.connect() as connection:
-        scalar = connection.scalar
         assert connection.execute(select(table.c.doc["title"])).scalar() == "hello"
         assert connection.execute(select(table.c.doc["n"])).scalar() == 7
         assert connection.execute(select(table.c.doc[("sub", "k")])).scalar() == "v"
@@ -505,7 +555,6 @@ def test_json_path_indexing(engine: Engine) -> None:
         # as on other backends. MonetDB's JSON.FILTER returns '[]' for a miss.
         assert connection.execute(select(table.c.doc["nul"])).scalar() is None
         assert connection.execute(select(table.c.doc["missing"])).scalar() is None
-        assert scalar is not None
 
 
 def test_pydantic_json_reports_schema_drift(engine: Engine) -> None:
@@ -604,6 +653,14 @@ def test_batched_reflection_matches_per_table_reflection(engine: Engine) -> None
         assert inspector.get_multi_unique_constraints(filter_names=names)[key] == inspector.get_unique_constraints(name)
         assert inspector.get_multi_check_constraints(filter_names=names)[key] == inspector.get_check_constraints(name)
         assert inspector.get_multi_table_comment(filter_names=names)[key] == inspector.get_table_comment(name)
+
+
+def test_batched_reflection_empty_filter_returns_nothing(engine: Engine) -> None:
+    metadata = MetaData()
+    Table("empty_filter_guard", metadata, Column("id", Integer))
+    metadata.create_all(engine)
+
+    assert inspect(engine).get_multi_columns(filter_names=[]) == {}
 
 
 def test_batched_reflection_issues_few_statements(engine: Engine) -> None:
