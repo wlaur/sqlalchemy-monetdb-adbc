@@ -8,10 +8,10 @@ same questions with one statement per kind.
 """
 
 from collections import defaultdict
-from collections.abc import Collection, Iterator
+from collections.abc import Callable, Collection, Iterator
 from typing import Any, cast
 
-from sqlalchemy import bindparam, text
+from sqlalchemy import bindparam, exc, text
 from sqlalchemy.engine import Connection, ObjectKind, ObjectScope, reflection
 from sqlalchemy.engine.interfaces import (
     ReflectedCheckConstraint,
@@ -39,23 +39,138 @@ from sqlalchemy_monetdb_adbc.reflection import resolve_type
 
 
 class MonetDBMultiReflection:
+    """Batched reflection, plus the single-table methods derived from it.
+
+    The single-table getters live here rather than beside the rest of the
+    catalog code in ``reflection.py`` because they are answered by calling the
+    batched method and taking the one entry out. Keeping one implementation of
+    each query is what stops the two shapes from disagreeing: they previously
+    did, and ``get_indexes`` reported nothing at all for a temporary table
+    because only the batched path knew to read the "tmp" catalog.
+    """
+
+    def _reflect_one(
+        self,
+        multi: Callable[..., Iterator[tuple[TableKey, Any]]],
+        connection: Connection,
+        table_name: str,
+        schema: str | None,
+        kw: dict[str, Any],
+    ) -> Any:
+        """Answer a single-table request from the batched implementation.
+
+        ``ObjectScope.ANY`` and ``ObjectKind.ANY`` because the caller named one
+        table and expects an answer whether it is permanent, temporary, or a
+        view.
+        """
+        for _key, value in multi(
+            connection,
+            schema=schema,
+            filter_names=(table_name,),
+            scope=ObjectScope.ANY,
+            kind=ObjectKind.ANY,
+            **kw,
+        ):
+            return value
+
+        raise exc.NoSuchTableError(table_name)
+
+    def get_columns(
+        self, connection: Connection, table_name: str, schema: str | None = None, **kw: Any
+    ) -> list[ReflectedColumn]:
+        return cast(
+            list[ReflectedColumn],
+            self._reflect_one(self.get_multi_columns, connection, table_name, schema, kw),
+        )
+
+    def get_pk_constraint(
+        self, connection: Connection, table_name: str, schema: str | None = None, **kw: Any
+    ) -> ReflectedPrimaryKeyConstraint:
+        return cast(
+            ReflectedPrimaryKeyConstraint,
+            self._reflect_one(self.get_multi_pk_constraint, connection, table_name, schema, kw),
+        )
+
+    def get_foreign_keys(
+        self, connection: Connection, table_name: str, schema: str | None = None, **kw: Any
+    ) -> list[ReflectedForeignKeyConstraint]:
+        return cast(
+            list[ReflectedForeignKeyConstraint],
+            self._reflect_one(self.get_multi_foreign_keys, connection, table_name, schema, kw),
+        )
+
+    def get_unique_constraints(
+        self, connection: Connection, table_name: str, schema: str | None = None, **kw: Any
+    ) -> list[ReflectedUniqueConstraint]:
+        return cast(
+            list[ReflectedUniqueConstraint],
+            self._reflect_one(self.get_multi_unique_constraints, connection, table_name, schema, kw),
+        )
+
+    def get_indexes(
+        self, connection: Connection, table_name: str, schema: str | None = None, **kw: Any
+    ) -> list[ReflectedIndex]:
+        return cast(
+            list[ReflectedIndex],
+            self._reflect_one(self.get_multi_indexes, connection, table_name, schema, kw),
+        )
+
+    @reflection.cache
+    def has_index(
+        self,
+        connection: Connection,
+        table_name: str,
+        index_name: str,
+        schema: str | None = None,
+        **kw: Any,
+    ) -> bool:
+        try:
+            indexes = self.get_indexes(connection, table_name, schema, **kw)
+        except exc.NoSuchTableError:
+            return False
+        return any(index["name"] == index_name for index in indexes)
+
+    def get_check_constraints(
+        self, connection: Connection, table_name: str, schema: str | None = None, **kw: Any
+    ) -> list[ReflectedCheckConstraint]:
+        return cast(
+            list[ReflectedCheckConstraint],
+            self._reflect_one(self.get_multi_check_constraints, connection, table_name, schema, kw),
+        )
+
+    def get_table_comment(
+        self, connection: Connection, table_name: str, schema: str | None = None, **kw: Any
+    ) -> ReflectedTableComment:
+        return cast(
+            ReflectedTableComment,
+            self._reflect_one(self.get_multi_table_comment, connection, table_name, schema, kw),
+        )
+
     def _resolve_request(
         self, connection: Connection, kw: dict[str, Any]
     ) -> tuple[str | None, dict[int, str], frozenset[int]]:
         """Pull the reflection arguments SQLAlchemy passes and resolve the tables."""
         schema = cast(str | None, kw.get("schema"))
         filter_names = cast("Collection[str] | None", kw.get("filter_names"))
-        tables, temporary = self._resolve_tables(
-            connection,
-            schema,
-            tuple(filter_names) if filter_names else None,
-            cast(ObjectScope, kw.get("scope", ObjectScope.DEFAULT)),
-            cast(ObjectKind, kw.get("kind", ObjectKind.TABLE)),
-            info_cache=kw.get("info_cache"),
-        )
+        names = tuple(filter_names) if filter_names else None
+        scope = cast(ObjectScope, kw.get("scope", ObjectScope.DEFAULT))
+        kind = cast(ObjectKind, kw.get("kind", ObjectKind.TABLE))
+
+        # Not @reflection.cache: it derives its key from the string arguments
+        # only, so the filter_names tuple would be invisible and every table
+        # would be served the first one's answer.
+        info_cache = cast("dict[Any, Any] | None", kw.get("info_cache"))
+        cache_key = ("_resolve_tables", schema, names, scope, kind)
+        if info_cache is not None and cache_key in info_cache:
+            return (schema, *cast("tuple[dict[int, str], frozenset[int]]", info_cache[cache_key]))
+
+        resolved = self._resolve_tables(connection, schema, names, scope, kind)
+        if info_cache is not None:
+            info_cache[cache_key] = resolved
+
+        tables, temporary = resolved
         return schema, tables, temporary
 
-    @reflection.cache
     def _resolve_tables(
         self,
         connection: Connection,
@@ -63,7 +178,6 @@ class MonetDBMultiReflection:
         filter_names: tuple[str, ...] | None,
         scope: ObjectScope,
         kind: ObjectKind,
-        **kw: Any,
     ) -> tuple[dict[int, str], frozenset[int]]:
         """Resolve the requested tables, and which of them are temporary.
 

@@ -14,17 +14,23 @@ and is validated against a live MonetDB server. It is not released to PyPI yet.
 
 ### Dialect compliance suite
 
-SQLAlchemy's own dialect suite runs from `suite/` (see Development). 1232 of
-its 1253 applicable tests pass. Every remaining failure is a MonetDB
-limitation rather than a gap in the dialect:
+SQLAlchemy's own dialect suite runs from `suite/` (see Development) and reports
+no failures: 1236 passed, 17 xfailed, 388 skipped. Each xfail is a MonetDB or
+driver limitation, listed with its reason in `suite/known_failures.py`. They are
+marked xfail rather than skipped so that the tests still run, and report XPASS
+if a future release gains the behaviour:
 
-- MonetDB infers no type for a bare parameter, so `WHERE ? = ?` and `? / ?`
-  are rejected. A cast resolves it, but SQLAlchemy emits the parameter alone.
-  This is most of the remainder.
+- MonetDB infers no type for a bare parameter, so `WHERE ? = ?` is rejected
+  outright. A cast resolves it, but SQLAlchemy emits the parameter alone. This
+  is most of the remainder.
+- Untyped parameters also change arithmetic: `SELECT ? / ?` with `(15, 10)`
+  returns `1`, not `1.5`, and dividing an untyped parameter by a decimal is
+  read as interval arithmetic.
 - No lastrowid, which is why generated values come back through `RETURNING`.
 - `RETURNING *` needs an explicit column list.
 - JSON is normalized on input, so a document does not round-trip byte for byte.
 - Some identifiers legal elsewhere are rejected, such as one containing `%`.
+- The driver cannot bind a parameter batch that mixes `float` and `Decimal`.
 
 Common table expressions are fully supported, including recursive CTEs, CTEs
 over `VALUES`, and CTEs driving `UPDATE`/`DELETE`. MonetDB's `WITH` accepts only
@@ -60,6 +66,13 @@ to decide that a statement returned no rows.
   connection.execute(delete(tree))
   ```
 - Indexes carry no ordering, so `ASC`/`DESC` on an index expression is dropped.
+- MonetDB rejects the all-zero (nil) UUID, `00000000-0000-0000-0000-000000000000`,
+  even as a plain literal, because it uses that value as its internal `NULL` for
+  the `uuid` type. A `Uuid` column therefore cannot store `uuid.UUID(int=0)`.
+- A `DECIMAL` declared without precision means `DECIMAL(18, 3)`. The dialect
+  always renders that explicitly: MonetDB drops the connection when a
+  *parameter* is cast to an unsized `DECIMAL`, which is what SQLAlchemy emits
+  for true division.
 - A `UNIQUE` constraint is backed by an index of the same name, so it is
   reflected both by `get_unique_constraints()` and by `get_indexes()`.
 
@@ -101,8 +114,14 @@ engine = create_engine(
 
 ## Arrow and polars
 
-Rows are converted to Python objects only if you ask for them. To keep data
-columnar, run the query on the same connection and take Arrow back:
+Rows are converted to Python objects only if you ask for them, and that
+conversion is done a column at a time through numpy rather than element by
+element: a 50k-row read spends about 2ms on the wire and 9ms becoming Python
+objects, where the obvious `to_pylist()` would spend 28ms. Ordinary row-returning
+queries are consequently faster here than through pymonetdb, not slower.
+
+To skip the conversion entirely and keep data columnar, run the query on the
+same connection and take Arrow back:
 
 ```python
 from sqlalchemy_monetdb_adbc import fetch_arrow_table, fetch_record_batches, ingest_arrow

@@ -8,6 +8,8 @@ from sqlalchemy.sql import compiler
 from sqlalchemy.sql.schema import Sequence
 from sqlalchemy.sql.type_api import TypeEngine
 
+from ._convert import batch_to_rows
+
 RESERVED_WORDS = frozenset(
     {
         "add",
@@ -335,10 +337,10 @@ class MonetDBCursor:
     2. Rows are converted one column at a time rather than one cell at a time.
        The manager builds each row as
        ``tuple(arr[i].as_py() for arr in batch.columns)``, which pays a pyarrow
-       scalar boxing cost per cell. Converting whole columns with
-       ``to_pylist()`` and zipping is several times faster for wide or long
-       results, and batches are still consumed lazily so ``stream_results``
-       and ``yield_per`` keep working.
+       scalar boxing cost per cell. :mod:`._convert` converts whole columns and
+       zips them, which is several times faster for wide or long results.
+       Batches are still consumed lazily, so ``stream_results`` and
+       ``yield_per`` keep working.
     """
 
     __slots__ = ("_batch", "_cursor", "_index", "_reader", "close", "executemany")
@@ -373,7 +375,7 @@ class MonetDBCursor:
             except StopIteration:
                 return False
             if batch.num_rows:
-                self._batch = list(zip(*(column.to_pylist() for column in batch.columns), strict=True))
+                self._batch = batch_to_rows(batch)
                 self._index = 0
                 return True
 

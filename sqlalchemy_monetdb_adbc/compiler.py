@@ -10,6 +10,10 @@ from sqlalchemy.sql.expression import cast as cast_expression
 from sqlalchemy.sql.schema import Column, ForeignKeyConstraint, Sequence, Table
 from sqlalchemy.sql.selectable import Select
 
+from sqlalchemy_monetdb_adbc.constants import (
+    MONETDB_DEFAULT_DECIMAL_PRECISION,
+    MONETDB_DEFAULT_DECIMAL_SCALE,
+)
 from sqlalchemy_monetdb_adbc.ddl import self_referential_foreign_keys
 
 FK_ACTION = re.compile(r"^(?:RESTRICT|CASCADE|SET NULL|NO ACTION|SET DEFAULT)$", re.IGNORECASE)
@@ -30,6 +34,31 @@ def _strip_ordering(expression: Any) -> ClauseElement:
 
 
 class MonetDBTypeCompiler(compiler.GenericTypeCompiler):
+    def _decimal(self, type_: sqltypes.TypeEngine[Any]) -> str:
+        """Render DECIMAL, always with an explicit precision and scale.
+
+        MonetDB defaults a bare DECIMAL to (18, 3), so naming it changes
+        nothing about the resulting column. It does avoid a server-side crash:
+        casting a *parameter* to an unsized DECIMAL, as SQLAlchemy does when
+        rendering true division, drops the connection with "unexpected end of
+        file". ``CAST(? AS DECIMAL(18, 3))`` is fine, and so is an unsized cast
+        of a literal.
+        """
+        precision = getattr(type_, "precision", None) or MONETDB_DEFAULT_DECIMAL_PRECISION
+        scale = getattr(type_, "scale", None)
+        if scale is None:
+            scale = MONETDB_DEFAULT_DECIMAL_SCALE
+        return f"DECIMAL({precision}, {scale})"
+
+    def visit_NUMERIC(self, type_: sqltypes.TypeEngine[Any], **kw: Any) -> str:  # noqa: N802
+        return self._decimal(type_)
+
+    def visit_DECIMAL(self, type_: sqltypes.TypeEngine[Any], **kw: Any) -> str:  # noqa: N802
+        return self._decimal(type_)
+
+    def visit_numeric(self, type_: sqltypes.TypeEngine[Any], **kw: Any) -> str:
+        return self._decimal(type_)
+
     def visit_TINYINT(self, type_: sqltypes.TypeEngine[Any], **kw: Any) -> str:  # noqa: N802
         return "TINYINT"
 
@@ -272,7 +301,11 @@ class MonetDBDDLCompiler(compiler.DDLCompiler):
 
 class MonetDBCompiler(compiler.SQLCompiler):
     def visit_sequence(self, sequence: Sequence, **kw: Any) -> str:
-        return f"NEXT VALUE FOR {self.dialect.identifier_preparer.format_sequence(sequence)}"
+        # self.preparer, not self.dialect.identifier_preparer: only the
+        # compiler's own preparer applies a schema_translate_map, and without it
+        # an inline sequence keeps the untranslated schema while the table
+        # around it gets translated.
+        return f"NEXT VALUE FOR {self.preparer.format_sequence(sequence)}"
 
     def returning_clause(
         self,

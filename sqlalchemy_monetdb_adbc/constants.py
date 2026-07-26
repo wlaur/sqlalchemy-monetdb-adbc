@@ -2,6 +2,10 @@ import re
 
 AUTOINCREMENT_DEFAULT = re.compile(r'^next value for "(?P<schema>[^"]+)"\."(?P<sequence>[^"]+)"$')
 
+# MonetDB's own defaults for a DECIMAL declared without precision or scale.
+MONETDB_DEFAULT_DECIMAL_PRECISION = 18
+MONETDB_DEFAULT_DECIMAL_SCALE = 3
+
 TABLE_TYPE_TABLE = 0
 TABLE_TYPE_VIEW = 1
 TABLE_TYPE_MERGE = 3
