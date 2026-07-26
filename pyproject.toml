@@ -51,15 +51,27 @@ Homepage = "https://github.com/wlaur/sqlalchemy-monetdb-adbc"
 Repository = "https://github.com/wlaur/sqlalchemy-monetdb-adbc"
 Issues = "https://github.com/wlaur/sqlalchemy-monetdb-adbc/issues"
 
-[tool.hatch.build]
-exclude = [
-    "/MONETDB_ISSUE.md",
-    "/REVIEW.md",
-    "/benchmarks",
-]
-
 [tool.hatch.build.targets.wheel]
 packages = ["sqlalchemy_monetdb_adbc"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/.gitattributes",
+    "/.github",
+    "/.gitignore",
+    "/AGENTS.md",
+    "/CONTRIBUTING.md",
+    "/LICENSE",
+    "/README.md",
+    "/compose.yaml",
+    "/packaging",
+    "/pyproject.toml",
+    "/setup.cfg",
+    "/sqlalchemy_monetdb_adbc",
+    "/suite",
+    "/tests",
+    "/uv.lock",
+]
 
 [tool.ruff]
 line-length = 120
