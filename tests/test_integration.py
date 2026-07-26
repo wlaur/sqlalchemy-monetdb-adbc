@@ -11,6 +11,7 @@ import pytest
 from pydantic import BaseModel
 from sqlalchemy import (
     JSON,
+    TIMESTAMP,
     Boolean,
     CheckConstraint,
     Column,
@@ -19,11 +20,13 @@ from sqlalchemy import (
     Engine,
     Float,
     ForeignKey,
+    Identity,
     Index,
     Integer,
     LargeBinary,
     MetaData,
     Numeric,
+    Sequence,
     String,
     Table,
     Time,
@@ -43,12 +46,14 @@ from sqlalchemy.exc import SAWarning
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 from sqlalchemy_monetdb_adbc import (
+    HUGEINT,
     PydanticJSON,
     fetch_arrow_table,
     fetch_record_batches,
     ingest_arrow,
     raw_adbc_connection,
 )
+from sqlalchemy_monetdb_adbc.base import RESERVED_WORDS
 
 pytestmark = pytest.mark.integration
 
@@ -303,6 +308,196 @@ def test_type_round_trip(engine: Engine, column_type: Any, value: Any) -> None:
     with engine.begin() as connection:
         connection.execute(insert(table), [{"value": value}])
         assert connection.execute(select(table.c.value)).scalar() == value
+
+
+def test_temporal_timezone_round_trip_normalizes_aware_values_to_utc(engine: Engine) -> None:
+    metadata = MetaData()
+    table = Table(
+        "temporal_timezone_round_trip",
+        metadata,
+        Column("time_tz", Time(timezone=True)),
+        Column("time_naive", Time()),
+        Column("datetime_tz", DateTime(timezone=True)),
+        Column("datetime_naive", DateTime()),
+        Column("timestamp_tz", TIMESTAMP(timezone=True)),
+        Column("timestamp_naive", TIMESTAMP()),
+    )
+    metadata.create_all(engine)
+    offset = datetime.timezone(datetime.timedelta(hours=2))
+    aware_time = datetime.time(0, 30, 1, 234567, tzinfo=offset)
+    naive_time = datetime.time(0, 30, 1, 234567)
+    aware_datetime = datetime.datetime(2024, 1, 2, 0, 30, 1, 234567, tzinfo=offset)
+    naive_datetime = datetime.datetime(2024, 1, 2, 0, 30, 1, 234567)
+
+    with engine.begin() as connection:
+        connection.execute(
+            insert(table),
+            {
+                "time_tz": aware_time,
+                "time_naive": naive_time,
+                "datetime_tz": aware_datetime,
+                "datetime_naive": naive_datetime,
+                "timestamp_tz": aware_datetime,
+                "timestamp_naive": naive_datetime,
+            },
+        )
+        row = connection.execute(select(table)).one()
+
+    assert row.time_tz == datetime.time(22, 30, 1, 234567, tzinfo=datetime.UTC)
+    assert row.time_naive == naive_time
+    assert row.datetime_tz == aware_datetime.astimezone(datetime.UTC)
+    assert row.datetime_naive == naive_datetime
+    assert row.timestamp_tz == aware_datetime.astimezone(datetime.UTC)
+    assert row.timestamp_naive == naive_datetime
+
+
+def test_wide_python_integers_round_trip_as_hugeint(engine: Engine) -> None:
+    metadata = MetaData()
+    table = Table("hugeint_round_trip", metadata, Column("value", HUGEINT))
+    metadata.create_all(engine)
+    values = [-(10**38) + 1, -(2**63) - 1, 2**63, 10**38 - 1]
+
+    with engine.begin() as connection:
+        connection.execute(insert(table), [{"value": value} for value in values])
+        stored = connection.execute(select(table.c.value).order_by(table.c.value)).scalars().all()
+
+    assert stored == values
+    assert all(type(value) is int for value in stored)
+
+
+def test_dec2025_reserved_words_are_quoted_in_ddl(engine: Engine) -> None:
+    with engine.connect() as connection:
+        catalog_words = {
+            str(word).lower() for word in connection.exec_driver_sql("SELECT keyword FROM sys.keywords").scalars()
+        }
+    scanner_only = sorted(RESERVED_WORDS - catalog_words)
+    assert {"as", "details", "fetch", "point", "qualify", "returning", "show"} <= set(scanner_only)
+
+    metadata = MetaData()
+    Table(
+        "reserved_word_columns",
+        metadata,
+        *(Column(word, Integer) for word in scanner_only),
+    )
+    metadata.create_all(engine)
+
+    reflected = {column["name"] for column in inspect(engine).get_columns("reserved_word_columns")}
+    assert reflected == set(scanner_only)
+
+
+def test_system_catalog_table_can_be_reflected_when_named(engine: Engine) -> None:
+    inspector = inspect(engine)
+
+    assert inspector.has_table("keys", schema="sys")
+    assert {column["name"] for column in inspector.get_columns("keys", schema="sys")} >= {"id", "table_id", "type"}
+    assert "keys" in inspector.get_table_names(schema="sys")
+
+
+def test_unique_index_drop_removes_the_backing_constraint(engine: Engine) -> None:
+    metadata = MetaData()
+    table = Table("unique_index_drop", metadata, Column("value", Integer))
+    metadata.create_all(engine)
+    index = Index("uq_unique_index_drop_value", table.c.value, unique=True)
+
+    index.create(engine)
+    assert {item["name"] for item in inspect(engine).get_unique_constraints(table.name)} == {index.name}
+
+    index.drop(engine)
+    assert inspect(engine).get_unique_constraints(table.name) == []
+
+
+def test_column_comment_schema_translation_reaches_the_mapped_table(engine: Engine) -> None:
+    metadata = MetaData()
+    Table(
+        "translated_comment",
+        metadata,
+        Column("value", Integer, comment="mapped comment"),
+        schema="comment_source",
+    )
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql("CREATE SCHEMA comment_target")
+        try:
+            mapped = connection.execution_options(schema_translate_map={"comment_source": "comment_target"})
+            metadata.create_all(mapped)
+            columns = inspect(connection).get_columns("translated_comment", schema="comment_target")
+            assert columns[0].get("comment") == "mapped comment"
+        finally:
+            connection.exec_driver_sql("DROP SCHEMA comment_target CASCADE")
+
+
+def test_sequence_defaults_and_generated_identity_options_are_reflected(engine: Engine) -> None:
+    metadata = MetaData()
+    sequence = Sequence("explicit_reflection_sequence", start=5, increment=2)
+    Table(
+        "sequence_default_reflection",
+        metadata,
+        Column("value", Integer, sequence, server_default=sequence.next_value()),
+    )
+    Table(
+        "identity_reflection",
+        metadata,
+        Column("value", Integer, Identity(start=10, increment=3, cycle=True)),
+    )
+    metadata.create_all(engine)
+
+    try:
+        inspector = inspect(engine)
+        sequence_column = inspector.get_columns("sequence_default_reflection")[0]
+        assert sequence_column.get("autoincrement") is False
+        assert sequence_column["default"] is not None
+        assert "explicit_reflection_sequence" in sequence_column["default"]
+        assert sequence_column.get("identity") is None
+
+        identity_column = inspector.get_columns("identity_reflection")[0]
+        assert identity_column.get("autoincrement") is True
+        assert identity_column["default"] is None
+        identity = identity_column.get("identity")
+        assert identity is not None
+        assert identity["start"] == 10
+        assert identity["increment"] == 3
+        assert identity["cycle"] is True
+
+        reflected = Table("identity_reflection", MetaData(), autoload_with=engine)
+        assert reflected.c.value.identity is not None
+        assert reflected.c.value.identity.start == 10
+        assert reflected.c.value.identity.increment == 3
+        assert reflected.c.value.identity.cycle is True
+    finally:
+        metadata.drop_all(engine)
+
+
+def test_server_errors_keep_dbapi_classification_and_sqlstate(engine: Engine) -> None:
+    from adbc_driver_monetdb import dbapi
+
+    assert issubclass(dbapi.ProgrammingError, dbapi.DatabaseError)
+    assert issubclass(dbapi.IntegrityError, dbapi.DatabaseError)
+    assert issubclass(dbapi.DatabaseError, dbapi.Error)
+
+    with engine.connect() as connection:
+        with pytest.raises(exc.ProgrammingError) as caught:
+            connection.exec_driver_sql("SELEC 1")
+
+        assert isinstance(caught.value.orig, dbapi.ProgrammingError)
+        assert caught.value.orig.sqlstate == "42000"
+        assert caught.value.connection_invalidated is False
+
+        connection.rollback()
+        assert connection.exec_driver_sql("SELECT 1").scalar() == 1
+
+        connection.exec_driver_sql("CREATE TABLE error_classification (id INTEGER PRIMARY KEY)")
+        connection.commit()
+        connection.exec_driver_sql("INSERT INTO error_classification VALUES (1)")
+        connection.commit()
+
+        with pytest.raises(exc.IntegrityError) as caught:
+            connection.exec_driver_sql("INSERT INTO error_classification VALUES (1)")
+
+        assert isinstance(caught.value.orig, dbapi.IntegrityError)
+        assert caught.value.orig.sqlstate == "40002"
+        assert caught.value.connection_invalidated is False
+        connection.rollback()
+        assert connection.exec_driver_sql("SELECT 1").scalar() == 1
 
 
 def test_null_round_trip(engine: Engine) -> None:

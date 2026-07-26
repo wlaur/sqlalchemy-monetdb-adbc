@@ -13,6 +13,7 @@ license = "MIT"
 license-files = ["LICENSE"]
 keywords = ["monetdb", "sqlalchemy", "adbc", "arrow", "database", "dialect"]
 classifiers = [
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
@@ -23,8 +24,8 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "adbc-driver-manager>=1.11,<1.12",
-    "adbc-driver-monetdb>=0.8.4",
+    "adbc-driver-manager>=1.11",
+    "adbc-driver-monetdb>=0.8.5",
     "numpy>=2.1",
     "pydantic>=2",
     "pyarrow>=25",
@@ -35,6 +36,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "alembic>=1.14",
+    "pymonetdb>=1.9",
     "pyright",
     "pytest>=9",
     "ruff",

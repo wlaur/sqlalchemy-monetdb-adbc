@@ -12,8 +12,13 @@ from sqlalchemy.sql.type_api import TypeEngine
 from ._convert import batch_to_rows
 
 record_batch = cast(Callable[..., Any], cast(Any, pa).record_batch)
+arrow = cast(Any, pa)
 ArrowInvalidError = cast(type[Exception], cast(Any, pa).ArrowInvalid)
 ArrowTypeError = cast(type[Exception], cast(Any, pa).ArrowTypeError)
+ArrowExtensionName = b"ARROW:extension:name"
+MonetDBHugeIntExtension = b"monetdb.hugeint"
+MIN_INT64 = -(2**63)
+MAX_INT64 = 2**63 - 1
 
 RESERVED_WORDS = frozenset(
     {
@@ -318,6 +323,99 @@ RESERVED_WORDS = frozenset(
         "year",
         "zone",
     }
+) | frozenset(
+    {
+        "as",
+        "both",
+        "details",
+        "fetch",
+        "geometrycollection",
+        "geometrycollectionm",
+        "geometrycollectionz",
+        "geometrycollectionzm",
+        "leading",
+        "linestring",
+        "linestringm",
+        "linestringz",
+        "linestringzm",
+        "logical",
+        "multilinestring",
+        "multilinestringm",
+        "multilinestringz",
+        "multilinestringzm",
+        "multipoint",
+        "multipointm",
+        "multipointz",
+        "multipointzm",
+        "multipolygon",
+        "multipolygonm",
+        "multipolygonz",
+        "multipolygonzm",
+        "physical",
+        "point",
+        "pointm",
+        "pointz",
+        "pointzm",
+        "polygon",
+        "polygonm",
+        "polygonz",
+        "polygonzm",
+        "qualify",
+        "recursive",
+        "returning",
+        "rewrite",
+        "show",
+        "snapshot",
+        "sql_bigint",
+        "sql_binary",
+        "sql_bit",
+        "sql_char",
+        "sql_date",
+        "sql_decimal",
+        "sql_double",
+        "sql_float",
+        "sql_guid",
+        "sql_hugeint",
+        "sql_integer",
+        "sql_interval_day",
+        "sql_interval_day_to_hour",
+        "sql_interval_day_to_minute",
+        "sql_interval_day_to_second",
+        "sql_interval_hour",
+        "sql_interval_hour_to_minute",
+        "sql_interval_hour_to_second",
+        "sql_interval_minute",
+        "sql_interval_minute_to_second",
+        "sql_interval_month",
+        "sql_interval_second",
+        "sql_interval_year",
+        "sql_interval_year_to_month",
+        "sql_longvarbinary",
+        "sql_longvarchar",
+        "sql_numeric",
+        "sql_real",
+        "sql_smallint",
+        "sql_time",
+        "sql_timestamp",
+        "sql_tinyint",
+        "sql_tsi_day",
+        "sql_tsi_frac_second",
+        "sql_tsi_hour",
+        "sql_tsi_minute",
+        "sql_tsi_month",
+        "sql_tsi_quarter",
+        "sql_tsi_second",
+        "sql_tsi_week",
+        "sql_tsi_year",
+        "sql_varbinary",
+        "sql_varchar",
+        "sql_wchar",
+        "sql_wlongvarchar",
+        "sql_wvarchar",
+        "trailing",
+        "unnest",
+        "within",
+    }
 )
 
 
@@ -478,11 +576,41 @@ def parameter_record_batch(rows: AbstractSequence[Any], schema: Any) -> Any | No
     if any(len(row) != width for row in rows):
         return None
     columns = [[row[index] for row in rows] for index in range(width)]
+    wide_integer_columns = {
+        index
+        for index, values in enumerate(columns)
+        if any(
+            isinstance(value, int) and not isinstance(value, bool) and not MIN_INT64 <= value <= MAX_INT64
+            for value in values
+        )
+    }
+    if wide_integer_columns:
+        arrays: list[Any] = []
+        fields: list[Any] = []
+        for index, values in enumerate(columns):
+            if index in wide_integer_columns:
+                data_type: Any = arrow.decimal128(38, 0)
+                arrays.append(arrow.array(values, type=data_type))
+                fields.append(
+                    arrow.field(
+                        str(index),
+                        data_type,
+                        metadata={ArrowExtensionName: MonetDBHugeIntExtension},
+                    )
+                )
+                continue
+
+            field = schema.field(index) if schema is not None and index < len(schema) else None
+            array: Any = arrow.array(values, type=field.type if field is not None else None)
+            arrays.append(array)
+            fields.append(arrow.field(str(index), array.type, metadata=field.metadata if field is not None else None))
+
+        return arrow.RecordBatch.from_arrays(arrays, schema=arrow.schema(fields))
     if schema is None:
         return record_batch(columns, names=[str(index) for index in range(width)])
     try:
         return record_batch(columns, schema=schema)
-    except (ArrowInvalidError, ArrowTypeError):
+    except (ArrowInvalidError, ArrowTypeError, OverflowError):
         return record_batch(columns, names=[str(index) for index in range(width)])
 
 

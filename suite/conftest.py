@@ -31,4 +31,4 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
         # Match the exact parametrisation first, then the whole test.
         reason = KNOWN_FAILURES.get(qualified) or KNOWN_FAILURES.get(qualified.split("[")[0])
         if reason is not None:
-            item.add_marker(pytest.mark.xfail(reason=reason, strict=False))
+            item.add_marker(pytest.mark.xfail(reason=reason, strict=True))

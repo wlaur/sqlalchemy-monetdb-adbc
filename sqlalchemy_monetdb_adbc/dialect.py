@@ -1,4 +1,5 @@
 import contextlib
+import re
 from collections.abc import Callable
 from threading import Lock
 from typing import Any, ClassVar, cast
@@ -22,6 +23,7 @@ from sqlalchemy_monetdb_adbc.base import (
     MonetDBIdentifierPreparer,
 )
 from sqlalchemy_monetdb_adbc.compiler import MonetDBCompiler, MonetDBDDLCompiler, MonetDBTypeCompiler
+from sqlalchemy_monetdb_adbc.connection import MonetDBConnection
 from sqlalchemy_monetdb_adbc.multi_reflection import MonetDBMultiReflection
 from sqlalchemy_monetdb_adbc.reflection import MonetDBReflection
 from sqlalchemy_monetdb_adbc.types import (
@@ -42,9 +44,12 @@ with contextlib.suppress(ImportError):
     # Alembic is optional; importing registers the MonetDB migration impl.
     from sqlalchemy_monetdb_adbc import _alembic  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
-SECURE_BACKEND_NAMES = frozenset({"monetdbs"})
 
-AUTOCOMMIT_OPTION = "adbc.connection.autocommit"
+def parse_server_version(value: Any) -> tuple[int, ...]:
+    match = re.search(r"\d+(?:\.\d+)*", str(value))
+    if match is None:
+        return ()
+    return tuple(int(part) for part in match.group().split("."))
 
 
 class MonetDBADBCDialect(  # pyright: ignore[reportIncompatibleMethodOverride]
@@ -140,9 +145,13 @@ class MonetDBADBCDialect(  # pyright: ignore[reportIncompatibleMethodOverride]
         driver_url = url.set(drivername=url.get_backend_name())
         return (driver_url.render_as_string(hide_password=False),), {}
 
+    def connect(self, *cargs: Any, **cparams: Any) -> DBAPIConnection:
+        connection = cast(Any, super()).connect(*cargs, **cparams)
+        return cast(DBAPIConnection, MonetDBConnection(connection))
+
     def _get_server_version_info(self, connection: Any) -> tuple[int, ...]:
         version = connection.exec_driver_sql("SELECT value FROM sys.environment WHERE name = 'monet_version'").scalar()
-        return tuple(int(part) for part in str(version).split("."))
+        return parse_server_version(version)
 
     def _get_default_schema_name(self, connection: Any) -> str:
         return str(connection.exec_driver_sql("SELECT CURRENT_SCHEMA").scalar())
@@ -166,7 +175,7 @@ class MonetDBADBCDialect(  # pyright: ignore[reportIncompatibleMethodOverride]
 
         if getattr(e, "status_code", None) == AdbcStatusCode.IO:
             return True
-        return bool(connection is not None and getattr(connection, "_closed", False))
+        return bool(connection is not None and getattr(connection, "closed", False))
 
     def get_isolation_level_values(self, dbapi_conn: DBAPIConnection) -> tuple[IsolationLevel, ...]:
         # MonetDB runs optimistic-concurrency snapshot transactions and rejects
@@ -176,23 +185,11 @@ class MonetDBADBCDialect(  # pyright: ignore[reportIncompatibleMethodOverride]
         return ("SERIALIZABLE", "AUTOCOMMIT")
 
     def get_isolation_level(self, dbapi_connection: DBAPIConnection) -> IsolationLevel:
-        connection = cast(Any, dbapi_connection)
-        value = connection.adbc_connection.get_option(AUTOCOMMIT_OPTION)
-        return "AUTOCOMMIT" if value == "true" else "SERIALIZABLE"
+        connection = cast(MonetDBConnection, dbapi_connection)
+        return "AUTOCOMMIT" if connection.autocommit else "SERIALIZABLE"
 
     def set_isolation_level(self, dbapi_connection: DBAPIConnection, level: IsolationLevel) -> None:
-        connection = cast(Any, dbapi_connection)
-        autocommit = level == "AUTOCOMMIT"
-
-        # The manager has no public setter that keeps its DB-API bookkeeping in
-        # sync. Its private layout is therefore pinned to 1.11.x and covered by
-        # the live autocommit test.
-        if connection._autocommit == autocommit:
-            return
-
-        connection._conn.set_autocommit(autocommit)
-        connection._autocommit = autocommit
-        connection._commit_supported = not autocommit
+        cast(MonetDBConnection, dbapi_connection).set_autocommit(level == "AUTOCOMMIT")
 
     def do_commit(self, dbapi_connection: PoolProxiedConnection) -> None:
         dbapi_connection.commit()

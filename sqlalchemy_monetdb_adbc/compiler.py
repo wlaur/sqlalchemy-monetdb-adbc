@@ -2,9 +2,10 @@ import re
 from collections.abc import Callable
 from typing import Any, cast
 
+from sqlalchemy import exc
 from sqlalchemy import types as sqltypes
 from sqlalchemy.sql import compiler, operators
-from sqlalchemy.sql.ddl import CreateIndex, CreateSequence, DropSequence
+from sqlalchemy.sql.ddl import CreateIndex, CreateSequence, DropIndex, DropSequence
 from sqlalchemy.sql.elements import ClauseElement, UnaryExpression
 from sqlalchemy.sql.expression import cast as cast_expression
 from sqlalchemy.sql.schema import Column, ForeignKeyConstraint, Sequence, Table
@@ -211,8 +212,9 @@ class MonetDBDDLCompiler(compiler.DDLCompiler):
         quote = self.preparer.quote_identifier
         table = column.table
         parts = [quote(table.name), quote(column.name)]
-        if table.schema is not None:
-            parts.insert(0, quote(table.schema))
+        schema = self.preparer.schema_for_object(table)
+        if schema:
+            parts.insert(0, quote(schema))
         return ".".join(parts)
 
     def visit_set_column_comment(self, create: Any, **kw: Any) -> str:
@@ -241,7 +243,7 @@ class MonetDBDDLCompiler(compiler.DDLCompiler):
 
         if (
             column.primary_key
-            and column is column.table._autoincrement_column  # pyright: ignore[reportPrivateUsage]
+            and column is column.table.autoincrement_column
             and column.identity is None
             and (column.default is None or (isinstance(column.default, Sequence) and column.default.optional))
         ):
@@ -298,6 +300,23 @@ class MonetDBDDLCompiler(compiler.DDLCompiler):
         text += f"{name} ON {formatted_table} ({columns})"
         return text
 
+    def visit_drop_index(self, drop: DropIndex, **kw: Any) -> str:
+        index = drop.element
+        if not index.unique:
+            if index.name is None:
+                raise exc.CompileError("DROP INDEX requires that the index have a name")
+            text = "DROP INDEX "
+            if drop.if_exists:
+                text += "IF EXISTS "
+            return text + self._prepared_index_name(index, include_schema=True)
+
+        table = cast(Table, index.table)
+        name = self._prepared_index_name(index, include_schema=False)
+        text = f"ALTER TABLE {self.preparer.format_table(table)} DROP CONSTRAINT "
+        if drop.if_exists:
+            text += "IF EXISTS "
+        return text + name
+
 
 class MonetDBCompiler(compiler.SQLCompiler):
     def visit_sequence(self, sequence: Sequence, **kw: Any) -> str:
@@ -332,7 +351,7 @@ class MonetDBCompiler(compiler.SQLCompiler):
         casts = ", ".join(
             "CAST(NULL AS {})".format(
                 self.dialect.type_compiler_instance.process(
-                    sqltypes.INTEGER() if type_._isnull else type_  # pyright: ignore[reportPrivateUsage]
+                    sqltypes.INTEGER() if isinstance(type_, sqltypes.NullType) else type_
                 )
             )
             for type_ in types
@@ -341,7 +360,7 @@ class MonetDBCompiler(compiler.SQLCompiler):
 
     def render_literal_value(self, value: Any, type_: sqltypes.TypeEngine[Any]) -> str:
         rendered = super().render_literal_value(value, type_)
-        if isinstance(value, str):
+        if isinstance(value, str) and rendered.startswith("'") and rendered.endswith("'"):
             return f"R{rendered}"
         return rendered
 
@@ -354,7 +373,7 @@ class MonetDBCompiler(compiler.SQLCompiler):
         **kw: Any,
     ) -> str:
         return "FROM " + ", ".join(
-            table._compiler_dispatch(self, asfrom=True, fromhints=from_hints, **kw) for table in extra_froms
+            self.process(table, asfrom=True, fromhints=from_hints, **kw) for table in extra_froms
         )
 
     def _json_extract(self, binary: Any, _cast_applied: bool = False, **kw: Any) -> str:
