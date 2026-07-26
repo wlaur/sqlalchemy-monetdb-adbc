@@ -42,7 +42,7 @@ The dialect requires `adbc-driver-monetdb` 0.8.5 or newer, which reports
 truthful row counts, exports the PEP 249 `Binary` constructor, caches
 prepared statements per connection, executes one-row bound DML without a
 savepoint, and returns small results from MonetDB's initial reply. One
-`DRIVER-WORKAROUND` remains in the source for upstream Apache arrow-adbc
+`DRIVER-WORKAROUND` remains in the source for upstream Apache Arrow ADBC
 behavior: ADBC always returns an Arrow stream, so the DB-API layer reports an
 empty `description` rather than `None` for statements that produce no result
 set, and SQLAlchemy needs `None` to decide that a statement returned no rows.
@@ -120,10 +120,10 @@ engine = create_engine(
 )
 ```
 
-## Arrow and polars
+## Arrow and Polars
 
 Rows are converted to Python objects only if you ask for them, and that
-conversion is done a column at a time through numpy rather than element by
+conversion is done a column at a time through NumPy rather than element by
 element. Ordinary row-returning queries with meaningful result sizes avoid
 per-cell Arrow scalar boxing.
 
