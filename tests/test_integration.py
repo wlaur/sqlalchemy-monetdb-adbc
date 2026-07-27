@@ -223,6 +223,146 @@ def test_raw_adbc_connection_shares_the_sqlalchemy_transaction(engine: Engine) -
         ]
 
 
+def test_ingest_arrow_creates_a_translated_sqlalchemy_table(engine: Engine) -> None:
+    import pyarrow as pa
+
+    metadata = MetaData()
+    table = Table(
+        "arrow_created",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("label", String(20), nullable=False, unique=True),
+        schema="arrow_source",
+    )
+    data = pa.table(
+        {
+            "id": pa.array([1, 2], type=pa.int32()),
+            "label": pa.array(["first", "second"], type=pa.string()),
+        }
+    )
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql("CREATE SCHEMA arrow_target")
+        mapped = connection.execution_options(schema_translate_map={"arrow_source": "arrow_target"})
+        assert ingest_arrow(mapped, table, data, create=True) == 2
+        assert mapped.exec_driver_sql("SELECT id, label FROM arrow_target.arrow_created ORDER BY id").all() == [
+            (1, "first"),
+            (2, "second"),
+        ]
+        inspector = inspect(mapped)
+        assert inspector.get_pk_constraint("arrow_created", schema="arrow_target")["constrained_columns"] == ["id"]
+        assert inspector.get_unique_constraints("arrow_created", schema="arrow_target")[0]["column_names"] == ["label"]
+        connection.exec_driver_sql("DROP SCHEMA arrow_target CASCADE")
+
+
+def test_ingest_arrow_partial_failure_blocks_sqlalchemy_commit(engine: Engine) -> None:
+    import pyarrow as pa
+
+    table = Table(
+        "arrow_partial_failure",
+        MetaData(),
+        Column("value", Integer),
+    )
+    table.create(engine)
+    batch = pa.record_batch({"value": pa.array([2, 3], type=pa.int32())})
+
+    def batches() -> Iterator[pa.RecordBatch]:
+        yield batch
+        raise RuntimeError("intentional upstream failure")
+
+    with engine.connect() as connection:
+        connection.execute(insert(table), {"value": 1})
+        reader = pa.RecordBatchReader.from_batches(batch.schema, batches())
+        with pytest.raises(Exception, match="intentional upstream failure"):
+            ingest_arrow(
+                connection,
+                table,
+                reader,
+                statement_options={"adbc.monetdb.write_batch_rows": 2},
+            )
+        assert connection.execute(select(table.c.value).order_by(table.c.value)).scalars().all() == [
+            1,
+            2,
+            3,
+        ]
+        with pytest.raises(exc.ProgrammingError, match="ROLLBACK is required"):
+            connection.commit()
+        assert not connection.in_transaction()
+        connection.rollback()
+        connection.execute(insert(table), {"value": 4})
+        connection.commit()
+
+    with engine.connect() as connection:
+        assert connection.execute(select(table.c.value)).scalars().all() == [4]
+
+
+def test_ingest_arrow_savepoint_atomicity_preserves_prior_work(engine: Engine) -> None:
+    import pyarrow as pa
+
+    table = Table(
+        "arrow_savepoint_failure",
+        MetaData(),
+        Column("value", Integer),
+    )
+    table.create(engine)
+    batch = pa.record_batch({"value": pa.array([2, 3], type=pa.int32())})
+
+    def batches() -> Iterator[pa.RecordBatch]:
+        yield batch
+        raise RuntimeError("intentional upstream failure")
+
+    with engine.connect() as connection:
+        connection.execute(insert(table), {"value": 1})
+        reader = pa.RecordBatchReader.from_batches(batch.schema, batches())
+        with pytest.raises(Exception, match="intentional upstream failure"):
+            ingest_arrow(
+                connection,
+                table,
+                reader,
+                statement_options={
+                    "adbc.monetdb.write_batch_rows": 2,
+                    "adbc.monetdb.ingest_atomicity": "savepoint",
+                },
+            )
+        assert connection.execute(select(table.c.value)).scalars().all() == [1]
+        connection.commit()
+
+    with engine.connect() as connection:
+        assert connection.execute(select(table.c.value)).scalars().all() == [1]
+
+
+def test_ingest_arrow_failure_is_atomic_in_autocommit(engine: Engine) -> None:
+    import pyarrow as pa
+
+    table = Table(
+        "arrow_autocommit_failure",
+        MetaData(),
+        Column("value", Integer),
+    )
+    table.create(engine)
+    batch = pa.record_batch({"value": pa.array([2, 3], type=pa.int32())})
+
+    def batches() -> Iterator[pa.RecordBatch]:
+        yield batch
+        raise RuntimeError("intentional upstream failure")
+
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+        connection.execute(insert(table), {"value": 1})
+        reader = pa.RecordBatchReader.from_batches(batch.schema, batches())
+        with pytest.raises(Exception, match="intentional upstream failure"):
+            ingest_arrow(
+                connection,
+                table,
+                reader,
+                statement_options={"adbc.monetdb.write_batch_rows": 2},
+            )
+        assert connection.execute(select(table.c.value)).scalars().all() == [1]
+        connection.execute(insert(table), {"value": 4})
+
+    with engine.connect() as connection:
+        assert connection.execute(select(table.c.value).order_by(table.c.value)).scalars().all() == [1, 4]
+
+
 def test_polars_read_database_shares_the_sqlalchemy_transaction(engine: Engine) -> None:
     import polars as pl
 
