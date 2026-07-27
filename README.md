@@ -38,10 +38,12 @@ Regular expression matching is not available: MonetDB's `~` is `mbr_contains`,
 a geometry operator, so `regexp_match()` raises rather than producing SQL that
 means something else. `regexp_replace()` works.
 
-The dialect requires `adbc-driver-monetdb` 0.8.6 or newer, which reports
-truthful row counts, exports the PEP 249 `Binary` constructor, caches
-prepared statements per connection, executes one-row bound DML without a
-savepoint, and returns small results from MonetDB's initial reply. One
+The dialect requires `adbc-driver-monetdb` 0.8.8 or newer, which coalesces
+producer batches into adaptive byte-budgeted COPY windows, streams bounded
+uploads, and prevents client-side ingest failures from committing partial
+appends. It also reports truthful row counts, caches prepared statements per
+connection, executes one-row bound DML without a savepoint, and returns small
+results from MonetDB's initial reply. One
 `DRIVER-WORKAROUND` remains in the source for upstream Apache Arrow ADBC
 behavior: ADBC always returns an Arrow stream, so the DB-API layer reports an
 empty `description` rather than `None` for statements that produce no result
@@ -105,9 +107,11 @@ with engine.connect() as connection:
     rows = connection.exec_driver_sql("SELECT 1").all()
 ```
 
-The explicit `monetdb+adbc://` form resolves to the same dialect. Do not install
-`sqlalchemy-monetdb-adbc` and `sqlalchemy-monetdb` in the same environment: both
-packages register the bare `monetdb://` SQLAlchemy entry point.
+The explicit `monetdb+adbc://` form resolves to this dialect. It can coexist
+with `sqlalchemy-monetdb` when every URL is explicit:
+`monetdb+adbc://` selects this package and `monetdb+pymonetdb://` selects the
+legacy dialect. Both packages register bare `monetdb://`, so its winner is
+entry-point-order dependent while both are installed.
 
 TLS URLs work with either the unchanged `monetdbs://` form or the explicit
 `monetdbs+adbc://` form. Both preserve the secure driver URI.
@@ -130,7 +134,7 @@ per-cell Arrow scalar boxing.
 NumPy is a runtime dependency only for this optimized Arrow-to-Python object
 conversion. Arrow-native reads and writes do not convert through NumPy.
 
-Driver 0.8.6 removes the avoidable fixed costs found in the release review:
+The driver removes the avoidable fixed costs found in the release review:
 one-row parameterized DML no longer adds a savepoint pair, and results of up to
 100 rows no longer force a second fetch. The driver also batches `executemany`
 parameters into one multi-row statement when MonetDB can preserve the DB-API
@@ -160,7 +164,7 @@ with Session(engine) as session:
         for batch in reader:
             ...
 
-    ingest_arrow(session.connection(), "trades", table, mode="append")
+    ingest_arrow(session.connection(), trades, table, mode="append")
 ```
 
 These run on the ADBC session backing the SQLAlchemy connection, so they see
@@ -169,7 +173,33 @@ with it.
 
 For a large incremental write, pass one `pyarrow.RecordBatchReader` to one
 `ingest_arrow` call. The reader remains streaming while the driver keeps one
-operation-level transaction scope.
+operation-level transaction scope. Passing a SQLAlchemy `Table` uses its name
+and translated schema. With `create=True`, the helper emits normal dialect DDL
+first, including primary keys, nullability, constraints, custom types, and
+schema translation:
+
+```python
+ingest_arrow(connection, trades, reader, create=True)
+```
+
+Advanced ADBC statement options can be passed without moving ingest policy
+into the dialect:
+
+```python
+ingest_arrow(
+    connection,
+    trades,
+    reader,
+    statement_options={"adbc.monetdb.ingest_atomicity": "savepoint"},
+)
+```
+
+By default, a client-side failure after completed COPY windows leaves the
+SQLAlchemy transaction readable but makes commit fail. SQLAlchemy deactivates
+a transaction after any failed commit, so the dialect rolls the physical ADBC
+transaction back before propagating that commit error; the pool and SQLAlchemy
+then agree that no transaction remains. Calling `rollback()` instead of
+attempting commit also recovers normally.
 
 `polars.read_database` can use that same session too. Pass it the underlying
 ADBC connection owned by SQLAlchemy:

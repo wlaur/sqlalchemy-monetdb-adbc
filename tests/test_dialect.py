@@ -5,6 +5,7 @@ from typing import Any, cast
 import adbc_driver_manager
 import pyarrow as pa
 import pytest
+from adbc_driver_manager.dbapi import Connection as ADBCConnection
 from sqlalchemy import Column, Index, Integer, MetaData, String, Table, create_engine, literal, select
 from sqlalchemy.dialects import registry
 from sqlalchemy.engine import Connection, make_url
@@ -22,6 +23,7 @@ from sqlalchemy_monetdb_adbc.base import (
     MonetDBIdentifierPreparer,
     parameter_record_batch,
 )
+from sqlalchemy_monetdb_adbc.connection import MonetDBConnection
 from sqlalchemy_monetdb_adbc.constants import DIALECT_NAMES
 from sqlalchemy_monetdb_adbc.dialect import parse_server_version
 from sqlalchemy_monetdb_adbc.reflection import resolve_type
@@ -212,9 +214,46 @@ def test_disconnect_detection_uses_adbc_io_status() -> None:
         "syntax error",
         status_code=adbc_driver_manager.AdbcStatusCode.INVALID_ARGUMENT,
     )
+    closed = adbc_driver_manager.ProgrammingError(
+        "INVALID_STATE: connection has been closed",
+        status_code=adbc_driver_manager.AdbcStatusCode.INVALID_STATE,
+    )
 
     assert dialect.is_disconnect(cast(Any, disconnected), None, None)
+    assert dialect.is_disconnect(cast(Any, closed), None, None)
     assert not dialect.is_disconnect(cast(Any, query_error), None, None)
+
+
+class _ClosedRawConnection:
+    adbc_connection: "_ClosedRawConnection"
+
+    def __init__(self) -> None:
+        self.adbc_connection = self
+        self.close_calls = 0
+
+    def get_option(self, _name: str) -> str:
+        return "false"
+
+    def rollback(self) -> None:
+        raise adbc_driver_manager.ProgrammingError(
+            "INVALID_STATE: connection has been closed",
+            status_code=adbc_driver_manager.AdbcStatusCode.INVALID_STATE,
+        )
+
+    def close(self) -> None:
+        self.close_calls += 1
+
+
+def test_closed_transport_does_not_mask_rollback_and_close_is_idempotent() -> None:
+    raw = _ClosedRawConnection()
+    connection = MonetDBConnection(cast(ADBCConnection, cast(object, raw)))
+
+    connection.rollback()
+    connection.close()
+    connection.close()
+
+    assert connection.closed
+    assert raw.close_calls == 0
 
 
 class _Reader:

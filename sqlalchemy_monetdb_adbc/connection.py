@@ -1,8 +1,17 @@
 from typing import Any
 
+import adbc_driver_manager
 from adbc_driver_manager.dbapi import Connection as ADBCConnection
 from adbc_driver_manager.dbapi import Cursor as ADBCCursor
 from sqlalchemy.engine import Connection as SQLAlchemyConnection
+
+
+def is_connection_closed_error(error: BaseException) -> bool:
+    return (
+        isinstance(error, adbc_driver_manager.Error)
+        and error.status_code == adbc_driver_manager.AdbcStatusCode.INVALID_STATE
+        and "connection has been closed" in str(error).lower()
+    )
 
 
 class MonetDBConnection:
@@ -18,15 +27,38 @@ class MonetDBConnection:
 
     def commit(self) -> None:
         if not self._autocommit:
-            self.raw_connection.commit()
+            try:
+                self.raw_connection.commit()
+            except adbc_driver_manager.ProgrammingError as error:
+                if (
+                    error.status_code == adbc_driver_manager.AdbcStatusCode.INVALID_STATE
+                    and error.sqlstate is not None
+                    and error.sqlstate.startswith("25")
+                ):
+                    try:
+                        self.raw_connection.rollback()
+                    except adbc_driver_manager.Error as rollback_error:
+                        error.add_note(f"automatic rollback also failed: {rollback_error}")
+                        self.close()
+                raise
 
     def rollback(self) -> None:
-        if not self._autocommit:
+        if self._autocommit or self._closed:
+            return
+        try:
             self.raw_connection.rollback()
+        except adbc_driver_manager.ProgrammingError as error:
+            if not is_connection_closed_error(error):
+                raise
+            self._closed = True
 
     def close(self) -> None:
-        self.raw_connection.close()
-        self._closed = True
+        if self._closed:
+            return
+        try:
+            self.raw_connection.close()
+        finally:
+            self._closed = True
 
     @property
     def autocommit(self) -> bool:

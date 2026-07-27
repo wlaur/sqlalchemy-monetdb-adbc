@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Generator, Sequence
+from collections.abc import Generator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from types import CapsuleType
 from typing import Literal, Protocol, cast
@@ -11,6 +11,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.sql.compiler import SQLCompiler
 from sqlalchemy.sql.elements import ClauseElement
 from sqlalchemy.sql.expression import Executable
+from sqlalchemy.sql.schema import Table
 
 from sqlalchemy_monetdb_adbc.connection import raw_adbc_connection
 
@@ -133,23 +134,46 @@ def _open_arrow_batch_reader(
 
 def ingest_arrow(
     connection: Connection,
-    table_name: str,
+    table: str | Table,
     data: ArrowIngestData,
     *,
     mode: Literal["append", "create", "replace", "create_append"] = "append",
     schema_name: str | None = None,
     temporary: bool = False,
+    create: bool = False,
+    statement_options: Mapping[str, bytes | float | int | str | None] | None = None,
 ) -> int:
-    """Bulk-load Arrow data into ``table_name`` on ``connection``'s transaction.
+    """Bulk-load Arrow data into ``table`` on ``connection``'s transaction.
 
     ``data`` is anything ADBC accepts: a ``pyarrow`` table, record batch, or
     reader, or any object exposing the Arrow PyCapsule interface. Returns the
-    number of rows written. Set ``temporary`` to address or create a local
-    temporary table; it cannot be combined with ``schema_name``.
+    number of rows written. A SQLAlchemy :class:`~sqlalchemy.Table` supplies its
+    name and translated schema. With ``create=True``, its normal SQLAlchemy DDL
+    is emitted before appending, preserving constraints and dialect types.
+
+    Set ``temporary`` to address or create a local temporary table; it cannot
+    be combined with ``schema_name``. ``statement_options`` passes advanced
+    ADBC driver options to the ingest statement.
     """
     adbc_connection = raw_adbc_connection(connection)
 
-    with adbc_connection.cursor() as cursor:
+    if isinstance(table, Table):
+        if schema_name is not None:
+            raise ValueError("schema_name cannot override a SQLAlchemy Table schema")
+        table_name = table.name
+        schema_name = connection.schema_for_object(table)
+        if create:
+            if mode != "append":
+                raise ValueError("create=True requires mode='append'")
+            if temporary:
+                raise ValueError("create=True cannot be combined with temporary=True")
+            table.create(connection)
+    else:
+        table_name = table
+        if create:
+            raise TypeError("create=True requires a SQLAlchemy Table")
+
+    with adbc_connection.cursor(adbc_stmt_kwargs=dict(statement_options or {})) as cursor:
         return cast(_ArrowCursor, cursor).adbc_ingest(
             table_name,
             data,
