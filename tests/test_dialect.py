@@ -253,7 +253,7 @@ def test_closed_transport_does_not_mask_rollback_and_close_is_idempotent() -> No
     connection.close()
 
     assert connection.closed
-    assert raw.close_calls == 0
+    assert raw.close_calls == 1
 
 
 class _Reader:

@@ -255,6 +255,49 @@ def test_ingest_arrow_creates_a_translated_sqlalchemy_table(engine: Engine) -> N
         connection.exec_driver_sql("DROP SCHEMA arrow_target CASCADE")
 
 
+def test_ingest_arrow_rejects_table_ddl_through_arrow_schema(engine: Engine) -> None:
+    import pyarrow as pa
+
+    table = Table(
+        "arrow_schema_only_create",
+        MetaData(),
+        Column("id", Integer, primary_key=True),
+    )
+    with engine.begin() as connection, pytest.raises(ValueError, match="would discard its constraints"):
+        ingest_arrow(connection, table, pa.table({"id": [1]}), mode="create")
+
+
+def test_ingest_arrow_quotes_reserved_and_mixed_case_names(engine: Engine) -> None:
+    import pyarrow as pa
+
+    table = Table(
+        "Select",
+        MetaData(),
+        Column("From", Integer, primary_key=True),
+        Column("MixedCase", String(20), nullable=False),
+    )
+    table.create(engine)
+    try:
+        with engine.begin() as connection:
+            assert (
+                ingest_arrow(
+                    connection,
+                    table,
+                    pa.table(
+                        {
+                            "From": pa.array([1], type=pa.int32()),
+                            "MixedCase": ["value"],
+                        }
+                    ),
+                )
+                == 1
+            )
+        with engine.connect() as connection:
+            assert connection.execute(select(table)).one() == (1, "value")
+    finally:
+        table.drop(engine)
+
+
 def test_ingest_arrow_partial_failure_blocks_sqlalchemy_commit(engine: Engine) -> None:
     import pyarrow as pa
 

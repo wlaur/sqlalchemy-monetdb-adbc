@@ -160,6 +160,11 @@ def ingest_arrow(
     if isinstance(table, Table):
         if schema_name is not None:
             raise ValueError("schema_name cannot override a SQLAlchemy Table schema")
+        if mode != "append" and not create:
+            raise ValueError(
+                "non-append ADBC modes with a SQLAlchemy Table would discard its constraints; "
+                "use create=True with mode='append' or pass the table name as a string"
+            )
         table_name = table.name
         schema_name = connection.schema_for_object(table)
         if create:
