@@ -27,8 +27,10 @@ KNOWN_FAILURES: Final[dict[str, str]] = {
     # MonetDB has no lastrowid; the dialect uses INSERT ... RETURNING instead,
     # which is why every other insert test passes.
     "LastrowidTest::test_last_inserted_id": "MonetDB has no lastrowid",
-    # MonetDB rejects '%' in an identifier: "Invalid identifier '%percent'".
-    "DifficultParametersTest::test_round_trip_same_named_column[%percent]": ("MonetDB rejects '%' in an identifier"),
+    # MonetDB rejects an identifier starting with '%': "Invalid identifier '%percent'".
+    "DifficultParametersTest::test_round_trip_same_named_column[%percent]": (
+        "MonetDB rejects identifiers starting with '%'"
+    ),
     # MonetDB parses and re-serialises JSON on the way in, so it stores
     # '{"key1":"data1"}' for the '{"key1": "data1"}' that was sent. The test
     # asserts the custom deserializer receives the original text byte for byte.
