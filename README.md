@@ -38,7 +38,7 @@ Regular expression matching is not available: MonetDB's `~` is `mbr_contains`,
 a geometry operator, so `regexp_match()` raises rather than producing SQL that
 means something else. `regexp_replace()` works.
 
-The dialect requires `adbc-driver-monetdb` 0.8.8 or newer, which coalesces
+The dialect requires `adbc-driver-monetdb` 0.8.9 or newer, which coalesces
 producer batches into adaptive byte-budgeted COPY windows, streams bounded
 uploads, and prevents client-side ingest failures from committing partial
 appends. It also reports truthful row counts, caches prepared statements per
@@ -86,11 +86,9 @@ set, and SQLAlchemy needs `None` to decide that a statement returned no rows.
 uv add sqlalchemy-monetdb-adbc
 ```
 
-Or with Python's standard package installer:
-
-```console
-python -m pip install sqlalchemy-monetdb-adbc
-```
+PyArrow is a required dependency because the dialect's row-conversion layer and
+public Arrow helpers use concrete `pyarrow` types. Polars is not required by the
+dialect; install it only when using the Polars examples or integration.
 
 ## Usage
 
@@ -131,8 +129,9 @@ conversion is done a column at a time through NumPy rather than element by
 element. Ordinary row-returning queries with meaningful result sizes avoid
 per-cell Arrow scalar boxing.
 
-NumPy is a runtime dependency only for this optimized Arrow-to-Python object
-conversion. Arrow-native reads and writes do not convert through NumPy.
+PyArrow and NumPy are runtime dependencies for the dialect's Arrow-native
+result layer and optimized Arrow-to-Python object conversion. Polars is
+optional. Arrow-native reads and writes do not convert through NumPy.
 
 The driver removes the avoidable fixed costs found in the release review:
 one-row parameterized DML no longer adds a savepoint pair, and results of up to
@@ -147,6 +146,8 @@ To skip the conversion entirely and keep data columnar, run the query on the
 same connection and take Arrow back:
 
 ```python
+import polars as pl
+
 from sqlalchemy_monetdb_adbc import (
     fetch_arrow_table,
     ingest_arrow,
@@ -157,7 +158,7 @@ statement = select(trades.c.id, trades.c.symbol).where(trades.c.symbol == "AAPL"
 
 with Session(engine) as session:
     table = fetch_arrow_table(session.connection(), statement)  # pyarrow.Table
-    df = polars.from_arrow(table)
+    df = pl.from_arrow(table)
 
     # streaming, for results that should not be materialized at once
     with open_arrow_batch_reader(session.connection(), statement) as reader:
@@ -182,6 +183,20 @@ schema translation:
 ingest_arrow(connection, trades, reader, create=True)
 ```
 
+For a Polars lazy query, install `adbc-driver-monetdb[polars]` and use its
+backpressured Arrow-stream adapter. The dialect remains Polars-independent:
+
+```python
+import polars as pl
+
+from adbc_driver_monetdb import PolarsArrowStream
+from sqlalchemy_monetdb_adbc import ingest_arrow
+
+stream = PolarsArrowStream(pl.scan_parquet("trades/*.parquet"))
+ingest_arrow(connection, trades, stream, mode="append")
+assert stream.rows_read > 0
+```
+
 Advanced ADBC statement options can be passed without moving ingest policy
 into the dialect:
 
@@ -201,16 +216,18 @@ transaction back before propagating that commit error; the pool and SQLAlchemy
 then agree that no transaction remains. Calling `rollback()` instead of
 attempting commit also recovers normally.
 
-`polars.read_database` can use that same session too. Pass it the underlying
+`pl.read_database` can use that same session too. Pass it the underlying
 ADBC connection owned by SQLAlchemy:
 
 ```python
+import polars as pl
+
 from sqlalchemy_monetdb_adbc import raw_adbc_connection
 
 with Session(engine) as session:
     session.execute(insert(trades), {"id": 1, "symbol": "AAPL"})
 
-    df = polars.read_database(
+    df = pl.read_database(
         query="SELECT id, symbol FROM trades ORDER BY id",
         connection=raw_adbc_connection(session.connection()),
     )
@@ -219,7 +236,7 @@ with Session(engine) as session:
 ```
 
 Do not close the returned ADBC connection or change its transaction state;
-SQLAlchemy owns both. Passing a URL to `polars.read_database` instead would
+SQLAlchemy owns both. Passing a URL to `pl.read_database` instead would
 open a separate session and would not see uncommitted work.
 
 Do not pass the raw ADBC connection to `DataFrame.write_database`: Polars'

@@ -15,12 +15,13 @@ def is_connection_closed_error(error: BaseException) -> bool:
 
 
 class MonetDBConnection:
-    __slots__ = ("_autocommit", "_closed", "raw_connection")
+    __slots__ = ("_autocommit", "_closed", "_defunct", "raw_connection")
 
     def __init__(self, connection: ADBCConnection) -> None:
         self.raw_connection = connection
         self._autocommit = connection.adbc_connection.get_option("adbc.connection.autocommit") == "true"
         self._closed = False
+        self._defunct = False
 
     def cursor(self) -> ADBCCursor:
         return self.raw_connection.cursor()
@@ -43,22 +44,26 @@ class MonetDBConnection:
                 raise
 
     def rollback(self) -> None:
-        if self._autocommit or self._closed:
+        if self._autocommit or self._closed or self._defunct:
             return
         try:
             self.raw_connection.rollback()
         except adbc_driver_manager.ProgrammingError as error:
             if not is_connection_closed_error(error):
                 raise
-            self._closed = True
+            self._defunct = True
 
     def close(self) -> None:
         if self._closed:
             return
         try:
             self.raw_connection.close()
+        except adbc_driver_manager.Error as error:
+            if not is_connection_closed_error(error):
+                raise
         finally:
             self._closed = True
+            self._defunct = True
 
     @property
     def autocommit(self) -> bool:
@@ -66,7 +71,7 @@ class MonetDBConnection:
 
     @property
     def closed(self) -> bool:
-        return self._closed
+        return self._closed or self._defunct
 
     def set_autocommit(self, value: bool) -> None:
         if self._autocommit == value:
