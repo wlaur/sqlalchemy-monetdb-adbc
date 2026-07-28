@@ -10,6 +10,7 @@ from sqlalchemy import Column, Index, Integer, MetaData, String, Table, create_e
 from sqlalchemy.dialects import registry
 from sqlalchemy.engine import Connection, make_url
 from sqlalchemy.exc import SAWarning
+from sqlalchemy.pool import QueuePool
 from sqlalchemy.schema import DropIndex, SetColumnComment
 from sqlalchemy.sql import sqltypes
 
@@ -244,15 +245,66 @@ class _ClosedRawConnection:
         self.close_calls += 1
 
 
-def test_closed_transport_does_not_mask_rollback_and_close_is_idempotent() -> None:
+def test_closed_transport_propagates_rollback_and_close_is_idempotent() -> None:
     raw = _ClosedRawConnection()
     connection = MonetDBConnection(cast(ADBCConnection, cast(object, raw)))
 
-    connection.rollback()
+    with pytest.raises(adbc_driver_manager.ProgrammingError, match="connection has been closed"):
+        connection.rollback()
     connection.close()
     connection.close()
 
     assert connection.closed
+    assert raw.close_calls == 1
+
+
+def test_pool_checkin_invalidates_a_defunct_connection() -> None:
+    created: list[_ClosedRawConnection] = []
+
+    def create_connection() -> MonetDBConnection:
+        raw = _ClosedRawConnection()
+        created.append(raw)
+        return MonetDBConnection(cast(ADBCConnection, cast(object, raw)))
+
+    connection_pool = QueuePool(cast(Any, create_connection), reset_on_return="rollback")
+    first = connection_pool.connect()
+    first.close()
+    second = connection_pool.connect()
+
+    assert len(created) == 2
+    assert created[0].close_calls == 1
+
+    second.close()
+    connection_pool.dispose()
+
+
+class _CommitFailureRawConnection(_ClosedRawConnection):
+    def commit(self) -> None:
+        raise adbc_driver_manager.ProgrammingError(
+            "transaction is aborted",
+            status_code=adbc_driver_manager.AdbcStatusCode.INVALID_STATE,
+            sqlstate="25005",
+        )
+
+    def close(self) -> None:
+        super().close()
+        raise adbc_driver_manager.OperationalError(
+            "cleanup failed",
+            status_code=adbc_driver_manager.AdbcStatusCode.IO,
+        )
+
+
+def test_commit_error_is_not_masked_by_cleanup_error() -> None:
+    raw = _CommitFailureRawConnection()
+    connection = MonetDBConnection(cast(ADBCConnection, cast(object, raw)))
+
+    with pytest.raises(adbc_driver_manager.ProgrammingError, match="transaction is aborted") as caught:
+        connection.commit()
+
+    assert caught.value.__notes__ == [
+        "automatic rollback also failed: INVALID_STATE: connection has been closed",
+        "connection cleanup also failed: cleanup failed",
+    ]
     assert raw.close_calls == 1
 
 
