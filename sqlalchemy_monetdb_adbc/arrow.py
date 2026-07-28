@@ -7,6 +7,7 @@ from typing import Literal, Protocol, cast
 
 import pyarrow as pa
 import pyarrow.dataset as pads
+from adbc_driver_monetdb import StatementOptionValues
 from sqlalchemy.engine import Connection
 from sqlalchemy.sql.compiler import SQLCompiler
 from sqlalchemy.sql.elements import ClauseElement
@@ -141,7 +142,7 @@ def ingest_arrow(
     schema_name: str | None = None,
     temporary: bool = False,
     create: bool = False,
-    statement_options: Mapping[str, bytes | float | int | str | None] | None = None,
+    statement_options: (StatementOptionValues | Mapping[str, bytes | float | int | str | None] | None) = None,
 ) -> int:
     """Bulk-load Arrow data into ``table`` on ``connection``'s transaction.
 

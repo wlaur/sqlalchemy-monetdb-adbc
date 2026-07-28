@@ -64,9 +64,9 @@ class MonetDBJSONIndexType(_MonetDBJSONPathBase, sqltypes.JSON.JSONIndexType):
 class MonetDBFloat(sqltypes.Float[Any]):
     """FLOAT/DOUBLE binding that coerces Decimal to float.
 
-    ADBC infers the Arrow type of a bound column from its first value, so a
-    column mixing float and Decimal (which SQLAlchemy permits for a Float
-    column) fails inference. Coercing here keeps the column uniformly double.
+    PyArrow cannot build one floating-point parameter array from arbitrary
+    mixtures of float and Decimal values. Coercing here makes ordinary mixed
+    SQLAlchemy executemany inputs match the prepared Arrow schema.
     """
 
     def bind_processor(self, dialect: Dialect) -> BindProcessor:
@@ -122,15 +122,6 @@ class MonetDBNumeric(sqltypes.Numeric[Any]):
         as_decimal = self.asdecimal
 
         def process(value: Any) -> Any:
-            # Bind one Python type per column, whatever the caller passed.
-            #
-            # adbc_driver_manager builds the parameter batch with
-            # pyarrow.RecordBatch.from_pydict, which infers each column's Arrow
-            # type from its first value and then fails on any row that does not
-            # fit: a Decimal after a float raises "tried to convert to double",
-            # and a float after a Decimal raises "int or Decimal object
-            # expected". Mixing the two in one executemany is ordinary usage, so
-            # normalise here rather than leave it to the caller.
             if value is None:
                 return None
             if isinstance(value, bool):
@@ -192,6 +183,9 @@ class DOUBLE_PRECISION(sqltypes.Double[float]):  # noqa: N801
 
 class INET(sqltypes.TypeEngine[str]):
     __visit_name__ = "INET"
+
+    def column_expression(self, colexpr: Any) -> Any:
+        return colexpr.cast(sqltypes.String(128))
 
 
 class URL(sqltypes.TypeEngine[str]):

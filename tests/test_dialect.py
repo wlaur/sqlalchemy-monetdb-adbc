@@ -14,7 +14,7 @@ from sqlalchemy.pool import QueuePool
 from sqlalchemy.schema import DropIndex, SetColumnComment
 from sqlalchemy.sql import sqltypes
 
-from sqlalchemy_monetdb_adbc import MonetDBADBCDialect
+from sqlalchemy_monetdb_adbc import INET, MonetDBADBCDialect
 from sqlalchemy_monetdb_adbc._alembic import MonetDBImpl
 from sqlalchemy_monetdb_adbc._convert import batch_to_rows
 from sqlalchemy_monetdb_adbc.arrow import compile_arrow_statement
@@ -48,6 +48,14 @@ def test_create_engine_loads_dialect_without_connecting() -> None:
         engine = create_engine(url)
         assert isinstance(engine.dialect, MonetDBADBCDialect)
         engine.dispose()
+
+
+def test_inet_columns_are_cast_for_binary_results() -> None:
+    table = Table("network", MetaData(), Column("address", INET))
+
+    compiled = select(table.c.address).compile(dialect=MonetDBADBCDialect())
+
+    assert str(compiled) == "SELECT CAST(network.address AS VARCHAR(128)) AS address \nFROM network"
 
 
 def test_import_dbapi_loads_monetdb_adbc_driver() -> None:
@@ -365,6 +373,9 @@ class _ParameterCursor:
     def __init__(self) -> None:
         self.parameters: list[Any] = []
 
+    def adbc_prepare(self, operation: str) -> Any | None:
+        return None
+
     def execute(self, operation: str, parameters: Any) -> None:
         self.parameters.append(parameters)
 
@@ -396,6 +407,26 @@ def test_compiled_parameters_reuse_arrow_schema() -> None:
     _, null_schema = cursor.execute_with_parameter_schema("SELECT ?", (None,), None)
     cursor.execute_with_parameter_schema("SELECT ?", (5,), null_schema)
     assert inner.parameters[-1].column(0).to_pylist() == [5]
+
+
+def test_compiled_parameters_use_the_prepared_arrow_schema() -> None:
+    month = pa.field(
+        "0",
+        pa.int32(),
+        metadata={b"ARROW:extension:name": b"monetdb.interval_month"},
+    )
+
+    class _PreparedParameterCursor(_ParameterCursor):
+        def adbc_prepare(self, operation: str) -> Any:
+            return pa.schema([month])
+
+    inner = _PreparedParameterCursor()
+    cursor = MonetDBCursor(inner)
+
+    _, schema = cursor.execute_with_parameter_schema("SELECT ?", (14,), None)
+
+    assert schema == pa.schema([month])
+    assert inner.parameters[-1].column(0).type == pa.int32()
 
 
 def test_parameter_batch_encodes_python_integers_wider_than_int64_as_hugeint() -> None:
