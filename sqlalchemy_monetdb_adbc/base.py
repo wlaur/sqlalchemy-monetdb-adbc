@@ -478,6 +478,11 @@ class MonetDBCursor:
         batch = parameter_record_batch([parameters], schema)
         if batch is None:
             return self._cursor.execute(operation, parameters), None
+        if schema is None:
+            prepared_schema = self._cursor.adbc_prepare(operation)
+            if prepared_schema is not None:
+                batch = parameter_record_batch([parameters], prepared_schema)
+                assert batch is not None
         return self._cursor.execute(operation, batch), batch.schema
 
     def executemany_with_parameter_schema(
@@ -495,6 +500,14 @@ class MonetDBCursor:
         )
         if batch is None:
             return self._cursor.executemany(operation, seq_of_parameters), None
+        if schema is None:
+            prepared_schema = self._cursor.adbc_prepare(operation)
+            if prepared_schema is not None:
+                batch = parameter_record_batch(
+                    cast(AbstractSequence[Any], seq_of_parameters),
+                    prepared_schema,
+                )
+                assert batch is not None
         return self._cursor.executemany(operation, batch), batch.schema
 
     def _next_batch(self) -> bool:

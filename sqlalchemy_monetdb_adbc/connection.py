@@ -40,7 +40,10 @@ class MonetDBConnection:
                         self.raw_connection.rollback()
                     except adbc_driver_manager.Error as rollback_error:
                         error.add_note(f"automatic rollback also failed: {rollback_error}")
-                        self.close()
+                        try:
+                            self.close()
+                        except adbc_driver_manager.Error as close_error:
+                            error.add_note(f"connection cleanup also failed: {close_error}")
                 raise
 
     def rollback(self) -> None:
@@ -52,6 +55,7 @@ class MonetDBConnection:
             if not is_connection_closed_error(error):
                 raise
             self._defunct = True
+            raise
 
     def close(self) -> None:
         if self._closed:

@@ -38,7 +38,7 @@ Regular expression matching is not available: MonetDB's `~` is `mbr_contains`,
 a geometry operator, so `regexp_match()` raises rather than producing SQL that
 means something else. `regexp_replace()` works.
 
-The dialect requires `adbc-driver-monetdb` 0.8.9 or newer, which coalesces
+The dialect requires `adbc-driver-monetdb` 0.9.0 or newer, which coalesces
 producer batches into adaptive byte-budgeted COPY windows, streams bounded
 uploads, and prevents client-side ingest failures from committing partial
 appends. It also reports truthful row counts, caches prepared statements per
@@ -75,8 +75,12 @@ set, and SQLAlchemy needs `None` to decide that a statement returned no rows.
   *parameter* is cast to an unsized `DECIMAL`, which is what SQLAlchemy emits
   for true division.
 - A `Numeric` column accepts `float`, `int` and `Decimal` in the same
-  `executemany`. ADBC would otherwise take the column's Arrow type from the
-  first value and reject the rest, so the dialect normalises the column first.
+  `executemany`. The dialect prepares the statement to obtain its exact Arrow
+  parameter schema and normalises mixed Python numeric values before building
+  that batch.
+- `INET` parameters bind as strings. Selected `INET` columns are cast to
+  `VARCHAR(128)` because MonetDB does not expose the native type through its
+  binary result protocol.
 - A `UNIQUE` constraint is backed by an index of the same name, so it is
   reflected both by `get_unique_constraints()` and by `get_indexes()`.
 
@@ -108,7 +112,7 @@ with engine.connect() as connection:
 The explicit `monetdb+adbc://` form resolves to this dialect. It can coexist
 with `sqlalchemy-monetdb` when every URL is explicit:
 `monetdb+adbc://` selects this package and `monetdb+pymonetdb://` selects the
-legacy dialect. Both packages register bare `monetdb://`, so its winner is
+pymonetdb-backed dialect. Both packages register bare `monetdb://`, so its winner is
 entry-point-order dependent while both are installed.
 
 TLS URLs work with either the unchanged `monetdbs://` form or the explicit

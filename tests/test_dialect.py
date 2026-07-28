@@ -10,10 +10,11 @@ from sqlalchemy import Column, Index, Integer, MetaData, String, Table, create_e
 from sqlalchemy.dialects import registry
 from sqlalchemy.engine import Connection, make_url
 from sqlalchemy.exc import SAWarning
+from sqlalchemy.pool import QueuePool
 from sqlalchemy.schema import DropIndex, SetColumnComment
 from sqlalchemy.sql import sqltypes
 
-from sqlalchemy_monetdb_adbc import MonetDBADBCDialect
+from sqlalchemy_monetdb_adbc import INET, MonetDBADBCDialect
 from sqlalchemy_monetdb_adbc._alembic import MonetDBImpl
 from sqlalchemy_monetdb_adbc._convert import batch_to_rows
 from sqlalchemy_monetdb_adbc.arrow import compile_arrow_statement
@@ -47,6 +48,14 @@ def test_create_engine_loads_dialect_without_connecting() -> None:
         engine = create_engine(url)
         assert isinstance(engine.dialect, MonetDBADBCDialect)
         engine.dispose()
+
+
+def test_inet_columns_are_cast_for_binary_results() -> None:
+    table = Table("network", MetaData(), Column("address", INET))
+
+    compiled = select(table.c.address).compile(dialect=MonetDBADBCDialect())
+
+    assert str(compiled) == "SELECT CAST(network.address AS VARCHAR(128)) AS address \nFROM network"
 
 
 def test_import_dbapi_loads_monetdb_adbc_driver() -> None:
@@ -244,15 +253,66 @@ class _ClosedRawConnection:
         self.close_calls += 1
 
 
-def test_closed_transport_does_not_mask_rollback_and_close_is_idempotent() -> None:
+def test_closed_transport_propagates_rollback_and_close_is_idempotent() -> None:
     raw = _ClosedRawConnection()
     connection = MonetDBConnection(cast(ADBCConnection, cast(object, raw)))
 
-    connection.rollback()
+    with pytest.raises(adbc_driver_manager.ProgrammingError, match="connection has been closed"):
+        connection.rollback()
     connection.close()
     connection.close()
 
     assert connection.closed
+    assert raw.close_calls == 1
+
+
+def test_pool_checkin_invalidates_a_defunct_connection() -> None:
+    created: list[_ClosedRawConnection] = []
+
+    def create_connection() -> MonetDBConnection:
+        raw = _ClosedRawConnection()
+        created.append(raw)
+        return MonetDBConnection(cast(ADBCConnection, cast(object, raw)))
+
+    connection_pool = QueuePool(cast(Any, create_connection), reset_on_return="rollback")
+    first = connection_pool.connect()
+    first.close()
+    second = connection_pool.connect()
+
+    assert len(created) == 2
+    assert created[0].close_calls == 1
+
+    second.close()
+    connection_pool.dispose()
+
+
+class _CommitFailureRawConnection(_ClosedRawConnection):
+    def commit(self) -> None:
+        raise adbc_driver_manager.ProgrammingError(
+            "transaction is aborted",
+            status_code=adbc_driver_manager.AdbcStatusCode.INVALID_STATE,
+            sqlstate="25005",
+        )
+
+    def close(self) -> None:
+        super().close()
+        raise adbc_driver_manager.OperationalError(
+            "cleanup failed",
+            status_code=adbc_driver_manager.AdbcStatusCode.IO,
+        )
+
+
+def test_commit_error_is_not_masked_by_cleanup_error() -> None:
+    raw = _CommitFailureRawConnection()
+    connection = MonetDBConnection(cast(ADBCConnection, cast(object, raw)))
+
+    with pytest.raises(adbc_driver_manager.ProgrammingError, match="transaction is aborted") as caught:
+        connection.commit()
+
+    assert caught.value.__notes__ == [
+        "automatic rollback also failed: INVALID_STATE: connection has been closed",
+        "connection cleanup also failed: cleanup failed",
+    ]
     assert raw.close_calls == 1
 
 
@@ -313,6 +373,9 @@ class _ParameterCursor:
     def __init__(self) -> None:
         self.parameters: list[Any] = []
 
+    def adbc_prepare(self, operation: str) -> Any | None:
+        return None
+
     def execute(self, operation: str, parameters: Any) -> None:
         self.parameters.append(parameters)
 
@@ -344,6 +407,26 @@ def test_compiled_parameters_reuse_arrow_schema() -> None:
     _, null_schema = cursor.execute_with_parameter_schema("SELECT ?", (None,), None)
     cursor.execute_with_parameter_schema("SELECT ?", (5,), null_schema)
     assert inner.parameters[-1].column(0).to_pylist() == [5]
+
+
+def test_compiled_parameters_use_the_prepared_arrow_schema() -> None:
+    month = pa.field(
+        "0",
+        pa.int32(),
+        metadata={b"ARROW:extension:name": b"monetdb.interval_month"},
+    )
+
+    class _PreparedParameterCursor(_ParameterCursor):
+        def adbc_prepare(self, operation: str) -> Any:
+            return pa.schema([month])
+
+    inner = _PreparedParameterCursor()
+    cursor = MonetDBCursor(inner)
+
+    _, schema = cursor.execute_with_parameter_schema("SELECT ?", (14,), None)
+
+    assert schema == pa.schema([month])
+    assert inner.parameters[-1].column(0).type == pa.int32()
 
 
 def test_parameter_batch_encodes_python_integers_wider_than_int64_as_hugeint() -> None:
