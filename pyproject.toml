@@ -29,7 +29,7 @@ dependencies = [
     "numpy>=2.1",
     "pydantic>=2",
     "pyarrow>=25",
-    "sqlalchemy>=2.0.34",
+    "sqlalchemy>=2.0.42",
     "tzdata>=2025.2; sys_platform == 'win32'",
 ]
 

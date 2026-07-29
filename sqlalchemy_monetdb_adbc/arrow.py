@@ -14,11 +14,11 @@ from adbc_driver_monetdb import (
     StatementOptionValues,
 )
 from sqlalchemy.engine import Connection
-from sqlalchemy.sql.compiler import SQLCompiler
 from sqlalchemy.sql.elements import ClauseElement
 from sqlalchemy.sql.expression import Executable
 from sqlalchemy.sql.schema import Table
 
+from sqlalchemy_monetdb_adbc.compiler import MonetDBCompiler
 from sqlalchemy_monetdb_adbc.connection import raw_adbc_connection
 
 
@@ -73,19 +73,31 @@ def compile_arrow_statement(connection: Connection, statement: Executable | str)
 
     schema_translate_map = connection.get_execution_options().get("schema_translate_map")
     compiled = cast(
-        SQLCompiler,
+        MonetDBCompiler,
         cast(ClauseElement, statement).compile(
             dialect=connection.dialect,
             schema_translate_map=schema_translate_map,
             render_schema_translate=bool(schema_translate_map),
-            compile_kwargs={"render_postcompile": True},
         ),
     )
-    parameters = compiled.params
-    # The dialect uses qmark, so bind values go positionally in the order the
-    # compiler emitted them.
-    ordered = [parameters[name] for name in compiled.positiontup or ()]
-    return str(compiled), ordered
+    expanded = compiled.construct_expanded_state()
+    processors = dict(compiled.arrow_bind_processors())
+    processors.update(expanded.processors)
+    ordered = [
+        processors[name](expanded.parameters[name]) if name in processors else expanded.parameters[name]
+        for name in expanded.positiontup or ()
+    ]
+    return expanded.statement, ordered
+
+
+def _arrow_execute_parameters(
+    statement: Executable | str,
+    compiled: list[object],
+    explicit: Sequence[object] | None,
+) -> Sequence[object]:
+    if explicit is not None and not isinstance(statement, str) and compiled:
+        raise ValueError("parameters cannot override bind values in a compiled SQLAlchemy statement")
+    return explicit if explicit is not None else compiled
 
 
 def fetch_arrow_table(
@@ -104,7 +116,7 @@ def fetch_arrow_table(
 
     with adbc_connection.cursor() as cursor:
         arrow_cursor = cast(_ArrowCursor, cursor)
-        arrow_cursor.execute(sql, parameters if parameters is not None else bound)
+        arrow_cursor.execute(sql, _arrow_execute_parameters(statement, bound, parameters))
         return arrow_cursor.fetch_arrow_table()
 
 
@@ -134,7 +146,7 @@ def _open_arrow_batch_reader(
 
     with adbc_connection.cursor() as cursor:
         arrow_cursor = cast(_ArrowCursor, cursor)
-        arrow_cursor.execute(sql, parameters if parameters is not None else bound)
+        arrow_cursor.execute(sql, _arrow_execute_parameters(statement, bound, parameters))
         yield arrow_cursor.fetch_record_batch()
 
 

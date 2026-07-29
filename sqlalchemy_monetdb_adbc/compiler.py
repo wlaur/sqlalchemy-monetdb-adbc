@@ -1,5 +1,5 @@
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, cast
 
 from sqlalchemy import exc
@@ -319,6 +319,9 @@ class MonetDBDDLCompiler(compiler.DDLCompiler):
 
 
 class MonetDBCompiler(compiler.SQLCompiler):
+    def arrow_bind_processors(self) -> Mapping[str, Callable[[object], object]]:
+        return cast(Mapping[str, Callable[[object], object]], self._bind_processors)
+
     def visit_sequence(self, sequence: Sequence, **kw: Any) -> str:
         # self.preparer, not self.dialect.identifier_preparer: only the
         # compiler's own preparer applies a schema_translate_map, and without it

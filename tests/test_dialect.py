@@ -6,11 +6,25 @@ import adbc_driver_manager
 import pyarrow as pa
 import pytest
 from adbc_driver_manager.dbapi import Connection as ADBCConnection
-from sqlalchemy import Column, Index, Integer, MetaData, String, Table, create_engine, literal, select
+from sqlalchemy import (
+    JSON,
+    Column,
+    Index,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    Time,
+    TypeDecorator,
+    create_engine,
+    literal,
+    select,
+)
 from sqlalchemy.dialects import registry
 from sqlalchemy.engine import Connection, make_url
 from sqlalchemy.exc import SAWarning
-from sqlalchemy.pool import QueuePool
+from sqlalchemy.exc import TimeoutError as SATimeoutError
+from sqlalchemy.pool import QueuePool, StaticPool
 from sqlalchemy.schema import DropIndex, SetColumnComment
 from sqlalchemy.sql import sqltypes
 
@@ -151,7 +165,8 @@ def test_alembic_unquotes_exactly_one_sql_string_layer() -> None:
 
 
 class _CompileConnection:
-    dialect = MonetDBADBCDialect()
+    def __init__(self, dialect: MonetDBADBCDialect | None = None) -> None:
+        self.dialect = dialect or MonetDBADBCDialect()
 
     def get_execution_options(self) -> dict[str, Any]:
         return {"schema_translate_map": {"source": "target"}}
@@ -166,6 +181,38 @@ def test_arrow_sql_expands_parameters_and_translates_schemas() -> None:
     assert "target.items" in sql
     assert "IN (?, ?, ?)" in sql
     assert parameters == [1, 2, 3]
+
+
+class _PrefixedString(TypeDecorator[str]):
+    impl = String
+    cache_ok = True
+
+    def process_bind_param(self, value: str | None, dialect: Any) -> str | None:
+        return None if value is None else f"processed:{value}"
+
+
+def test_arrow_sql_applies_bind_processors_to_scalar_and_expanding_values() -> None:
+    dialect = MonetDBADBCDialect(json_serializer=lambda value: f"json:{value['value']}")
+    table = Table(
+        "items",
+        MetaData(),
+        Column("doc", JSON),
+        Column("at", Time(timezone=True)),
+        Column("custom", _PrefixedString()),
+    )
+    statement = select(table).where(
+        table.c.doc.in_([{"value": 1}, {"value": 2}]),
+        table.c.at == datetime.time(1, 2, 3, tzinfo=datetime.timezone(datetime.timedelta(hours=2))),
+        table.c.custom == "value",
+    )
+
+    sql, parameters = compile_arrow_statement(
+        cast(Connection, _CompileConnection(dialect)),
+        statement,
+    )
+
+    assert "doc IN (?, ?)" in sql
+    assert parameters == ["json:1", "json:2", datetime.time(23, 2, 3), "processed:value"]
 
 
 def test_column_comment_applies_schema_translation() -> None:
@@ -234,10 +281,23 @@ def test_disconnect_detection_uses_adbc_io_status() -> None:
     closed = adbc_driver_manager.ProgrammingError(
         "INVALID_STATE: connection has been closed",
         status_code=adbc_driver_manager.AdbcStatusCode.INVALID_STATE,
+        details=[("adbc.monetdb.connection_terminal", b"true")],
+    )
+    terminal_timeout = adbc_driver_manager.OperationalError(
+        "operation timed out",
+        status_code=adbc_driver_manager.AdbcStatusCode.TIMEOUT,
+        details=[("adbc.monetdb.connection_terminal", b"true")],
+    )
+    server_timeout = adbc_driver_manager.OperationalError(
+        "server timed out",
+        status_code=adbc_driver_manager.AdbcStatusCode.TIMEOUT,
+        sqlstate="HYT00",
     )
 
     assert dialect.is_disconnect(cast(Any, disconnected), None, None)
     assert dialect.is_disconnect(cast(Any, closed), None, None)
+    assert dialect.is_disconnect(cast(Any, terminal_timeout), None, None)
+    assert not dialect.is_disconnect(cast(Any, server_timeout), None, None)
     assert not dialect.is_disconnect(cast(Any, query_error), None, None)
 
 
@@ -255,6 +315,7 @@ class _ClosedRawConnection:
         raise adbc_driver_manager.ProgrammingError(
             "INVALID_STATE: connection has been closed",
             status_code=adbc_driver_manager.AdbcStatusCode.INVALID_STATE,
+            details=[("adbc.monetdb.connection_terminal", b"true")],
         )
 
     def close(self) -> None:
@@ -290,6 +351,58 @@ def test_pool_checkin_invalidates_a_defunct_connection() -> None:
     assert len(created) == 2
     assert created[0].close_calls == 1
 
+    second.close()
+    connection_pool.dispose()
+
+
+class _HealthyRawConnection(_ClosedRawConnection):
+    def rollback(self) -> None:
+        pass
+
+
+def test_queue_pool_reuses_healthy_connections_honors_bounds_and_disposes_idle() -> None:
+    created: list[_HealthyRawConnection] = []
+
+    def create_connection() -> MonetDBConnection:
+        raw = _HealthyRawConnection()
+        created.append(raw)
+        return MonetDBConnection(cast(ADBCConnection, cast(object, raw)))
+
+    connection_pool = QueuePool(
+        cast(Any, create_connection),
+        pool_size=1,
+        max_overflow=1,
+        timeout=0.01,
+        reset_on_return="rollback",
+    )
+    first = connection_pool.connect()
+    first.close()
+    reused = connection_pool.connect()
+    assert len(created) == 1
+    overflow = connection_pool.connect()
+    with pytest.raises(SATimeoutError):
+        connection_pool.connect()
+    reused.close()
+    overflow.close()
+    connection_pool.dispose()
+
+    assert sum(raw.close_calls for raw in created) == 2
+
+
+def test_static_pool_reconnects_after_a_terminal_reset_failure() -> None:
+    created: list[_ClosedRawConnection] = []
+
+    def create_connection() -> MonetDBConnection:
+        raw = _ClosedRawConnection()
+        created.append(raw)
+        return MonetDBConnection(cast(ADBCConnection, cast(object, raw)))
+
+    connection_pool = StaticPool(cast(Any, create_connection), reset_on_return="rollback")
+    first = connection_pool.connect()
+    first.close()
+    second = connection_pool.connect()
+
+    assert len(created) == 2
     second.close()
     connection_pool.dispose()
 

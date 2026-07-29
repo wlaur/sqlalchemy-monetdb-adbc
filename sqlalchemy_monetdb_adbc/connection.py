@@ -5,13 +5,16 @@ from adbc_driver_manager.dbapi import Connection as ADBCConnection
 from adbc_driver_manager.dbapi import Cursor as ADBCCursor
 from sqlalchemy.engine import Connection as SQLAlchemyConnection
 
+_TERMINAL_ERROR_DETAIL = "adbc.monetdb.connection_terminal"
 
-def is_connection_closed_error(error: BaseException) -> bool:
-    return (
-        isinstance(error, adbc_driver_manager.Error)
-        and error.status_code == adbc_driver_manager.AdbcStatusCode.INVALID_STATE
-        and "connection has been closed" in str(error).lower()
-    )
+
+def is_terminal_connection_error(error: BaseException) -> bool:
+    if not isinstance(error, adbc_driver_manager.Error):
+        return False
+    for key, value in error.details:
+        if key in (_TERMINAL_ERROR_DETAIL, _TERMINAL_ERROR_DETAIL.encode()) and value == b"true":
+            return True
+    return False
 
 
 class MonetDBConnection:
@@ -52,7 +55,7 @@ class MonetDBConnection:
         try:
             self.raw_connection.rollback()
         except adbc_driver_manager.ProgrammingError as error:
-            if not is_connection_closed_error(error):
+            if not is_terminal_connection_error(error):
                 raise
             self._defunct = True
             raise
@@ -63,7 +66,7 @@ class MonetDBConnection:
         try:
             self.raw_connection.close()
         except adbc_driver_manager.Error as error:
-            if not is_connection_closed_error(error):
+            if not is_terminal_connection_error(error):
                 raise
         finally:
             self._closed = True
