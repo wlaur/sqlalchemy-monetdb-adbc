@@ -80,7 +80,7 @@ def compile_arrow_statement(connection: Connection, statement: Executable | str)
             render_schema_translate=bool(schema_translate_map),
         ),
     )
-    expanded = compiled.construct_expanded_state()
+    expanded = compiled.construct_expanded_state(escape_names=False)
     processors = dict(compiled.arrow_bind_processors())
     processors.update(expanded.processors)
     ordered = [
@@ -95,7 +95,7 @@ def _arrow_execute_parameters(
     compiled: list[object],
     explicit: Sequence[object] | None,
 ) -> Sequence[object]:
-    if explicit is not None and not isinstance(statement, str) and compiled:
+    if explicit is not None and not isinstance(statement, str):
         raise ValueError("parameters cannot override bind values in a compiled SQLAlchemy statement")
     return explicit if explicit is not None else compiled
 
@@ -109,7 +109,8 @@ def fetch_arrow_table(
 
     The query runs on the ADBC session backing ``connection``, so it sees that
     connection's uncommitted work and takes part in its transaction. Rows are
-    never converted to Python objects.
+    never converted to Python objects. ``parameters`` is only for raw SQL
+    strings; SQLAlchemy statements carry their own bind values.
     """
     sql, bound = compile_arrow_statement(connection, statement)
     adbc_connection = raw_adbc_connection(connection)
@@ -130,7 +131,8 @@ def open_arrow_batch_reader(
     Like :func:`fetch_arrow_table`, but the result is not materialized at once.
     A context manager, because the reader stays valid only while the cursor
     behind it is open. MonetDB carries one result channel per session, so
-    finish the stream before using ``connection`` again.
+    finish the stream before using ``connection`` again. ``parameters`` is only
+    for raw SQL strings.
     """
     return _open_arrow_batch_reader(connection, statement, parameters)
 
