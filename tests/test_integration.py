@@ -1238,6 +1238,8 @@ def test_arrow_helpers_run_on_the_sqlalchemy_transaction(engine: Engine) -> None
         assert arrow_table.schema.names == ["id", "sym"]
         with pytest.raises(ValueError, match="cannot override bind values"):
             fetch_arrow_table(session.connection(), statement, ["MSFT"])
+        with pytest.raises(ValueError, match="cannot override bind values"):
+            fetch_arrow_table(session.connection(), select(literal(1)), ())
 
         expanded = select(table.c.id).where(table.c.id.in_([1, 3, 5])).order_by(table.c.id)
         assert fetch_arrow_table(session.connection(), expanded).column("id").to_pylist() == [1, 3, 5]

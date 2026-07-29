@@ -16,6 +16,7 @@ from sqlalchemy import (
     Table,
     Time,
     TypeDecorator,
+    bindparam,
     create_engine,
     literal,
     select,
@@ -213,6 +214,18 @@ def test_arrow_sql_applies_bind_processors_to_scalar_and_expanding_values() -> N
 
     assert "doc IN (?, ?)" in sql
     assert parameters == ["json:1", "json:2", datetime.time(23, 2, 3), "processed:value"]
+
+
+def test_arrow_sql_handles_escaped_scalar_and_expanding_bind_names() -> None:
+    table = Table("items", MetaData(), Column("id", Integer))
+    statement = select(bindparam("custom.value", "value", type_=_PrefixedString())).where(
+        table.c.id.in_(bindparam("selected ids", [1, 2], expanding=True))
+    )
+
+    sql, parameters = compile_arrow_statement(cast(Connection, _CompileConnection()), statement)
+
+    assert "IN (?, ?)" in sql
+    assert parameters == ["processed:value", 1, 2]
 
 
 def test_column_comment_applies_schema_translation() -> None:
