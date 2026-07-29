@@ -38,7 +38,7 @@ Regular expression matching is not available: MonetDB's `~` is `mbr_contains`,
 a geometry operator, so `regexp_match()` raises rather than producing SQL that
 means something else. `regexp_replace()` works.
 
-The dialect requires `adbc-driver-monetdb` 0.9.0 or newer, which coalesces
+The dialect requires `adbc-driver-monetdb` 0.9.1 or newer, which coalesces
 producer batches into adaptive byte-budgeted COPY windows, streams bounded
 uploads, and prevents client-side ingest failures from committing partial
 appends. It also reports truthful row counts, caches prepared statements per
@@ -187,19 +187,25 @@ schema translation:
 ingest_arrow(connection, trades, reader, create=True)
 ```
 
-For a Polars lazy query, install `adbc-driver-monetdb[polars]` and use its
-backpressured Arrow-stream adapter. The dialect remains Polars-independent:
+For a Parquet source, use the driver's bounded row-group stream, re-exported by
+the dialect:
 
 ```python
-import polars as pl
+from sqlalchemy_monetdb_adbc import ParquetArrowStream, ingest_arrow
 
-from adbc_driver_monetdb import PolarsArrowStream
-from sqlalchemy_monetdb_adbc import ingest_arrow
-
-stream = PolarsArrowStream(pl.scan_parquet("trades/*.parquet"))
-ingest_arrow(connection, trades, stream, mode="append")
-assert stream.rows_read > 0
+with ParquetArrowStream("trades.parquet") as stream:
+    ingest_arrow(connection, trades, stream, mode="append")
+    assert stream.rows_read == stream.num_rows
 ```
+
+`ParquetArrowStream` decodes one physical row group at a time, uses an owned
+PyArrow file handle instead of a whole-file memory map, and bounds each emitted
+batch by rows and estimated bytes. Its `epoch_columns` mapping can reinterpret
+nullable integer timestamps or dates batch by batch without an eager Polars
+conversion. For non-Parquet Polars lazy pipelines,
+`adbc-driver-monetdb[polars]` provides `PolarsArrowStream`.
+Backpressure bounds its handoff queue, but Polars 1.43 can decode ahead
+proportional to a Parquet dataset; prefer `ParquetArrowStream` for files.
 
 Advanced ADBC statement options can be passed without moving ingest policy
 into the dialect:
