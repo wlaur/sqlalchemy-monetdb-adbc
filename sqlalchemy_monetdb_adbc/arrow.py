@@ -7,7 +7,12 @@ from typing import Literal, Protocol, cast
 
 import pyarrow as pa
 import pyarrow.dataset as pads
-from adbc_driver_monetdb import StatementOptionValues
+from adbc_driver_monetdb import (
+    DEFAULT_PARQUET_RECLAIM_BYTES,
+    ParquetArrowStream,
+    ParquetEpochUnit,
+    StatementOptionValues,
+)
 from sqlalchemy.engine import Connection
 from sqlalchemy.sql.compiler import SQLCompiler
 from sqlalchemy.sql.elements import ClauseElement
@@ -190,9 +195,12 @@ def ingest_arrow(
 
 
 __all__ = [
+    "DEFAULT_PARQUET_RECLAIM_BYTES",
     "ArrowArrayExportable",
     "ArrowIngestData",
     "ArrowStreamExportable",
+    "ParquetArrowStream",
+    "ParquetEpochUnit",
     "compile_arrow_statement",
     "fetch_arrow_table",
     "ingest_arrow",

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sqlalchemy-monetdb-adbc"
-version = "0.2.0"
+version = "0.2.1"
 description = "SQLAlchemy dialect for MonetDB over ADBC"
 authors = [{ name = "William Laurén", email = "lauren.william.a@gmail.com" }]
 requires-python = ">=3.13"
@@ -25,7 +25,7 @@ classifiers = [
 ]
 dependencies = [
     "adbc-driver-manager>=1.11",
-    "adbc-driver-monetdb>=0.9.0",
+    "adbc-driver-monetdb>=0.9.1",
     "numpy>=2.1",
     "pydantic>=2",
     "pyarrow>=25",
@@ -36,7 +36,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "alembic>=1.14",
-    "polars>=1.32",
+    "polars>=1.43.1",
     "pyarrow-stubs>=20.0.0.20260625",
     "pymonetdb>=1.9",
     "pyright",

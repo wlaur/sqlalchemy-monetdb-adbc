@@ -206,7 +206,13 @@ def test_raw_adbc_connection_shares_the_sqlalchemy_transaction(engine: Engine) -
 
         adbc_connection = raw_adbc_connection(connection)
         schema = pa.schema([("id", pa.int32()), ("label", pa.string())])
-        batch = pa.record_batch([[2, 3], ["arrow-a", "arrow-b"]], schema=schema)
+        batch = pa.record_batch(
+            [
+                pa.array([2, 3], type=pa.int32()),
+                pa.array(["arrow-a", "arrow-b"], type=pa.string()),
+            ],
+            schema=schema,
+        )
         with adbc_connection.cursor() as cursor:
             cursor.adbc_ingest("ingest_target", batch, mode="append")
 

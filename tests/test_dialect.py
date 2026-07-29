@@ -14,7 +14,7 @@ from sqlalchemy.pool import QueuePool
 from sqlalchemy.schema import DropIndex, SetColumnComment
 from sqlalchemy.sql import sqltypes
 
-from sqlalchemy_monetdb_adbc import INET, MonetDBADBCDialect
+from sqlalchemy_monetdb_adbc import INET, MonetDBADBCDialect, ParquetArrowStream, ParquetEpochUnit
 from sqlalchemy_monetdb_adbc._alembic import MonetDBImpl
 from sqlalchemy_monetdb_adbc._convert import batch_to_rows
 from sqlalchemy_monetdb_adbc.arrow import compile_arrow_statement
@@ -64,6 +64,14 @@ def test_import_dbapi_loads_monetdb_adbc_driver() -> None:
     assert isinstance(dbapi, ModuleType)
     assert dbapi.__name__ == "adbc_driver_monetdb.dbapi"
     assert dbapi.paramstyle == "qmark"
+
+
+def test_parquet_stream_is_reexported_from_the_dialect() -> None:
+    from adbc_driver_monetdb import ParquetArrowStream as DriverParquetArrowStream
+    from adbc_driver_monetdb import ParquetEpochUnit as DriverParquetEpochUnit
+
+    assert ParquetArrowStream is DriverParquetArrowStream
+    assert ParquetEpochUnit is DriverParquetEpochUnit
 
 
 def test_create_connect_args_translates_sqlalchemy_scheme() -> None:
