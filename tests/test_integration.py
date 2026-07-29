@@ -1070,6 +1070,30 @@ class _Other(BaseModel):
     title: str
 
 
+def test_arrow_helpers_apply_sqlalchemy_bind_processors(engine: Engine) -> None:
+    metadata = MetaData()
+    table = Table(
+        "arrow_bind_processors",
+        metadata,
+        Column("id", Integer),
+        Column("doc", JSON),
+        Column("model", PydanticJSON(_Content)),
+        Column("at", Time(timezone=True)),
+    )
+    metadata.create_all(engine)
+    content = _Content(title="Arrow", tags=["typed"], views=3)
+    at = datetime.time(1, 2, 3, tzinfo=datetime.timezone(datetime.timedelta(hours=2)))
+
+    with engine.begin() as connection:
+        connection.execute(insert(table), [{"id": 1, "doc": {"value": 1}, "model": content, "at": at}])
+        for statement in (
+            select(table.c.id).where(table.c.doc == {"value": 1}),
+            select(table.c.id).where(table.c.model == content),
+            select(table.c.id).where(table.c.at == at),
+        ):
+            assert fetch_arrow_table(connection, statement).column("id").to_pylist() == [1]
+
+
 def test_pydantic_json_round_trip(engine: Engine) -> None:
     metadata = MetaData()
     table = Table("pyd_docs", metadata, Column("id", Integer), Column("doc", PydanticJSON(_Content)))
@@ -1212,6 +1236,8 @@ def test_arrow_helpers_run_on_the_sqlalchemy_transaction(engine: Engine) -> None
         assert isinstance(arrow_table, pa.Table)
         assert arrow_table.num_rows == 50
         assert arrow_table.schema.names == ["id", "sym"]
+        with pytest.raises(ValueError, match="cannot override bind values"):
+            fetch_arrow_table(session.connection(), statement, ["MSFT"])
 
         expanded = select(table.c.id).where(table.c.id.in_([1, 3, 5])).order_by(table.c.id)
         assert fetch_arrow_table(session.connection(), expanded).column("id").to_pylist() == [1, 3, 5]

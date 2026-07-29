@@ -544,7 +544,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.1" },
     { name = "pyarrow", specifier = ">=25" },
     { name = "pydantic", specifier = ">=2" },
-    { name = "sqlalchemy", specifier = ">=2.0.34" },
+    { name = "sqlalchemy", specifier = ">=2.0.42" },
     { name = "tzdata", marker = "sys_platform == 'win32'", specifier = ">=2025.2" },
 ]
 

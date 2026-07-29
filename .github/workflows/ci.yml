@@ -49,6 +49,23 @@ jobs:
       - run: uv sync --locked --all-groups
       - run: uv run --no-sync pytest
 
+  sqlalchemy-compiler-contract:
+    name: SQLAlchemy compiler contract (${{ matrix.sqlalchemy-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sqlalchemy-version: ["2.0.42", "2.0.51"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          python-version: "3.13"
+      - run: uv sync --locked --all-groups
+      - run: >-
+          uv run --no-sync --with "sqlalchemy==${{ matrix.sqlalchemy-version }}"
+          pytest tests/test_dialect.py -q
+
   integration:
     name: Integration (MonetDB ${{ matrix.monetdb-version }})
     runs-on: ubuntu-24.04-arm

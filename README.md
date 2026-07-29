@@ -202,7 +202,8 @@ with ParquetArrowStream("trades.parquet") as stream:
 PyArrow file handle instead of a whole-file memory map, and bounds each emitted
 batch by rows and estimated bytes. Its `epoch_columns` mapping can reinterpret
 nullable integer timestamps or dates batch by batch without an eager Polars
-conversion. For non-Parquet Polars lazy pipelines,
+conversion. Explicit `row_groups` preserve their requested order and reject
+duplicates rather than ingesting the same physical group twice. For non-Parquet Polars lazy pipelines,
 `adbc-driver-monetdb[polars]` provides `PolarsArrowStream`.
 Backpressure bounds its handoff queue, but Polars 1.43 can decode ahead
 proportional to a Parquet dataset; prefer `ParquetArrowStream` for files.
@@ -219,12 +220,14 @@ ingest_arrow(
 )
 ```
 
-By default, a client-side failure after completed COPY windows leaves the
-SQLAlchemy transaction readable but makes commit fail. SQLAlchemy deactivates
-a transaction after any failed commit, so the dialect rolls the physical ADBC
-transaction back before propagating that commit error; the pool and SQLAlchemy
-then agree that no transaction remains. Calling `rollback()` instead of
-attempting commit also recovers normally.
+The driver's default constrained-append mode stages bounded COPY windows and
+performs one final target move. A producer or constraint failure therefore
+preserves earlier SQLAlchemy work. A client-side failure after completed
+*direct* target COPY windows leaves the transaction readable but makes commit
+fail. SQLAlchemy deactivates a transaction after any failed commit, so the
+dialect rolls the physical ADBC transaction back before propagating that
+commit error; the pool and SQLAlchemy then agree that no transaction remains.
+Calling `rollback()` instead of attempting commit also recovers normally.
 
 `pl.read_database` can use that same session too. Pass it the underlying
 ADBC connection owned by SQLAlchemy:
@@ -258,8 +261,12 @@ columnar writes:
 ingest_arrow(session.connection(), "trades", df, mode="append")
 ```
 
-A SQLAlchemy statement is compiled for you, bind parameters included; a plain
-SQL string works too. `raw_adbc_connection()` returns the underlying ADBC
+A SQLAlchemy statement is compiled for you, bind parameters included. Arrow
+helpers run the same bind processors as normal SQLAlchemy execution, including
+JSON codecs, `PydanticJSON`, temporal normalization, custom type decorators,
+`NULL`, and expanding parameters. Explicit `parameters` are accepted for a
+plain SQL string; they cannot override values already bound into a compiled
+SQLAlchemy statement. `raw_adbc_connection()` returns the underlying ADBC
 connection if you need the driver API directly.
 
 The driver prefetches large results by default. Closing a partially consumed
@@ -272,6 +279,11 @@ than fetch/decode overlap:
 ```python
 engine = create_engine("monetdb://localhost/demo?read_prefetch=false")
 ```
+
+The driver marks terminal client transport failures with the structured ADBC
+detail `adbc.monetdb.connection_terminal=true`. The dialect invalidates those
+sessions in `QueuePool` and `StaticPool`, while server SQLSTATE timeout or
+cancellation errors remain reusable when MonetDB kept the session open.
 
 ## JSON
 

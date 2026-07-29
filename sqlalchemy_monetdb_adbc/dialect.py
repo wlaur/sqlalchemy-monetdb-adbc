@@ -23,7 +23,7 @@ from sqlalchemy_monetdb_adbc.base import (
     MonetDBIdentifierPreparer,
 )
 from sqlalchemy_monetdb_adbc.compiler import MonetDBCompiler, MonetDBDDLCompiler, MonetDBTypeCompiler
-from sqlalchemy_monetdb_adbc.connection import MonetDBConnection, is_connection_closed_error
+from sqlalchemy_monetdb_adbc.connection import MonetDBConnection, is_terminal_connection_error
 from sqlalchemy_monetdb_adbc.multi_reflection import MonetDBMultiReflection
 from sqlalchemy_monetdb_adbc.reflection import MonetDBReflection
 from sqlalchemy_monetdb_adbc.types import (
@@ -173,7 +173,7 @@ class MonetDBADBCDialect(  # pyright: ignore[reportIncompatibleMethodOverride]
     ) -> bool:
         from adbc_driver_manager import AdbcStatusCode
 
-        if getattr(e, "status_code", None) == AdbcStatusCode.IO or is_connection_closed_error(e):
+        if getattr(e, "status_code", None) == AdbcStatusCode.IO or is_terminal_connection_error(e):
             return True
         return bool(connection is not None and getattr(connection, "closed", False))
 

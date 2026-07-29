@@ -10,6 +10,7 @@ from collections.abc import Iterator
 from typing import Any, cast
 
 import adbc_driver_manager
+import adbc_driver_monetdb
 import pyarrow as pa
 import pytest
 from orm_models import IngestIdentity, ORMBase, Reading, Sensor, SensorTags, TagDetails, TypeMatrix
@@ -31,6 +32,10 @@ from sqlalchemy_monetdb_adbc import (
 )
 
 pytestmark = pytest.mark.integration
+
+DRIVER_PRESERVES_CONSTRAINED_APPEND_TRANSACTION = tuple(
+    int(part) for part in adbc_driver_monetdb.__version__.split(".")
+) >= (0, 10, 0)
 
 
 @pytest.fixture(autouse=True)
@@ -276,6 +281,8 @@ def test_orm_transactions_savepoints_and_ingest_poison(engine: Engine) -> None:
 
     duplicate_ts = datetime.datetime(2026, 7, 28, 12, 0)
     with Session(engine) as session:
+        session.add(Sensor(id=5, name="preserved", active=True))
+        session.flush()
         data = _reading_table([(2, duplicate_ts), (2, duplicate_ts)])
         with pytest.raises(adbc_driver_manager.IntegrityError):
             ingest_arrow(
@@ -284,11 +291,16 @@ def test_orm_transactions_savepoints_and_ingest_poison(engine: Engine) -> None:
                 data,
                 statement_options={"adbc.monetdb.write_batch_rows": 1},
             )
-        with pytest.raises(DBAPIError):
+        if DRIVER_PRESERVES_CONSTRAINED_APPEND_TRANSACTION:
             session.commit()
-        session.rollback()
+        else:
+            with pytest.raises(DBAPIError):
+                session.commit()
+            session.rollback()
         assert session.scalar(select(func.count()).select_from(Reading)) == 0
-        assert session.scalar(select(func.count()).select_from(Sensor)) == 2
+        assert session.scalar(select(func.count()).select_from(Sensor)) == (
+            3 if DRIVER_PRESERVES_CONSTRAINED_APPEND_TRANSACTION else 2
+        )
 
 
 def test_arrow_ingest_and_identity_interoperate_with_orm(engine: Engine) -> None:
