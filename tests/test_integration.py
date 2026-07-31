@@ -304,6 +304,43 @@ def test_ingest_arrow_quotes_reserved_and_mixed_case_names(engine: Engine) -> No
         table.drop(engine)
 
 
+@pytest.mark.parametrize("rows", [1, 500])
+def test_ingest_arrow_appends_by_name_at_every_stream_size(engine: Engine, rows: int) -> None:
+    # the driver routes small streams through a prepared INSERT and larger ones through COPY, and
+    # matches by name on both. the dialect must not reorder or fill anything of its own
+    import pyarrow as pa
+
+    table = Table(
+        "align_by_name",
+        MetaData(),
+        Column("ts", TIMESTAMP),
+        Column("a", Float),
+        Column("b", Integer, server_default=text("7")),
+        Column("c", String(8)),
+    )
+    table.create(engine)
+    try:
+        with engine.begin() as connection:
+            assert (
+                ingest_arrow(
+                    connection,
+                    table,
+                    pa.table(
+                        {
+                            "c": pa.array(["x"] * rows),
+                            "a": pa.array([1.5] * rows, type=pa.float64()),
+                            "ts": pa.array([datetime.datetime(2026, 7, 31)] * rows, type=pa.timestamp("us")),
+                        }
+                    ),
+                )
+                == rows
+            )
+        with engine.connect() as connection:
+            assert connection.execute(select(table).distinct()).all() == [(datetime.datetime(2026, 7, 31), 1.5, 7, "x")]
+    finally:
+        table.drop(engine)
+
+
 def test_ingest_arrow_partial_failure_blocks_sqlalchemy_commit(engine: Engine) -> None:
     import pyarrow as pa
 

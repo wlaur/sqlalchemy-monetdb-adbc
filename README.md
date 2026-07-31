@@ -182,6 +182,12 @@ These run on the ADBC session backing the SQLAlchemy connection, so they see
 that connection's uncommitted work, take part in its transaction, and roll back
 with it.
 
+Appending to an existing table matches the stream's columns to the destination's
+by name, so the stream may present them in any order and may supply a subset; a
+column it omits takes that column's `DEFAULT`. The driver owns that contract and
+applies it identically on both of its ingest routes, so the dialect does not
+reorder or null-fill anything itself.
+
 For a large incremental write, pass one `pyarrow.RecordBatchReader` to one
 `ingest_arrow` call. The reader remains streaming while the driver keeps one
 operation-level transaction scope. Passing a SQLAlchemy `Table` uses its name
