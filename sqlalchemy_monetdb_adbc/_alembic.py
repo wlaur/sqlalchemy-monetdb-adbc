@@ -15,6 +15,7 @@ from alembic.ddl.base import (
     format_type,  # pyright: ignore[reportUnknownVariableType]
 )
 from alembic.ddl.impl import DefaultImpl
+from sqlalchemy import ForeignKeyConstraint
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.sql.compiler import DDLCompiler
 from sqlalchemy.sql.type_api import TypeEngine
@@ -32,6 +33,26 @@ class MonetDBImpl(DefaultImpl):
     __dialect__ = "monetdb"
 
     transactional_ddl = True
+
+    def correct_for_autogen_foreignkeys(
+        self,
+        conn_fks: set[ForeignKeyConstraint],
+        metadata_fks: set[ForeignKeyConstraint],
+    ) -> None:
+        conn_fk_by_sig = {
+            self._create_reflected_constraint_sig(foreign_key).unnamed_no_options: foreign_key
+            for foreign_key in conn_fks
+        }
+        metadata_fk_by_sig = {
+            self._create_metadata_constraint_sig(foreign_key).unnamed_no_options: foreign_key
+            for foreign_key in metadata_fks
+        }
+
+        for signature in conn_fk_by_sig.keys() & metadata_fk_by_sig.keys():
+            metadata_fk = metadata_fk_by_sig[signature]
+            if metadata_fk.ondelete is None and metadata_fk.onupdate is None:
+                metadata_fk.ondelete = "RESTRICT"
+                metadata_fk.onupdate = "RESTRICT"
 
     def render_type(self, type_obj: Any, autogen_context: Any) -> str | Literal[False]:
         # A migration describes the database schema, so a PydanticJSON column
