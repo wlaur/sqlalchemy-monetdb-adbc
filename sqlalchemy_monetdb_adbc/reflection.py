@@ -10,8 +10,6 @@ from sqlalchemy_monetdb_adbc.constants import (
     TABLE_TYPE_MERGE,
     TABLE_TYPE_REMOTE,
     TABLE_TYPE_REPLICA,
-    TABLE_TYPE_SYSTEM_TABLE,
-    TABLE_TYPE_SYSTEM_VIEW,
     TABLE_TYPE_TABLE,
     TABLE_TYPE_VIEW,
 )
@@ -99,7 +97,7 @@ class MonetDBReflection:
     def get_table_names(self, connection: Connection, schema: str | None = None, **kw: Any) -> list[str]:
         query = text(
             "SELECT name FROM sys.tables "
-            "WHERE type IN (:table, :merge, :remote, :replica, :system) AND schema_id = :schema_id "
+            "WHERE type IN (:table, :merge, :remote, :replica) AND schema_id = :schema_id "
             "ORDER BY name"
         )
         rows = connection.execute(
@@ -109,7 +107,6 @@ class MonetDBReflection:
                 "merge": TABLE_TYPE_MERGE,
                 "remote": TABLE_TYPE_REMOTE,
                 "replica": TABLE_TYPE_REPLICA,
-                "system": TABLE_TYPE_SYSTEM_TABLE,
                 "schema_id": self._schema_id(connection, schema),
             },
         )
@@ -131,14 +128,11 @@ class MonetDBReflection:
 
     @reflection.cache
     def get_view_names(self, connection: Connection, schema: str | None = None, **kw: Any) -> list[str]:
-        query = text(
-            "SELECT name FROM sys.tables WHERE type IN (:type, :system) AND schema_id = :schema_id ORDER BY name"
-        )
+        query = text("SELECT name FROM sys.tables WHERE type = :type AND schema_id = :schema_id ORDER BY name")
         rows = connection.execute(
             query,
             {
                 "type": TABLE_TYPE_VIEW,
-                "system": TABLE_TYPE_SYSTEM_VIEW,
                 "schema_id": self._schema_id(connection, schema),
             },
         )

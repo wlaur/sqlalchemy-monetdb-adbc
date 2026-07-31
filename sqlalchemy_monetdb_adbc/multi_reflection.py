@@ -33,6 +33,7 @@ from sqlalchemy_monetdb_adbc.constants import (
     KEY_TYPE_PRIMARY,
     KEY_TYPE_UNIQUE,
     TABLE_TYPE_LOCAL_TEMPORARY,
+    TABLE_TYPE_SYSTEM_TABLE,
     TABLE_TYPE_SYSTEM_VIEW,
     TABLE_TYPE_VIEW,
     TABLE_TYPES,
@@ -193,8 +194,12 @@ class MonetDBMultiReflection:
         types: list[int] = []
         if ObjectKind.TABLE in kind:
             types.extend(TABLE_TYPES)
+            if filter_names is not None:
+                types.append(TABLE_TYPE_SYSTEM_TABLE)
         if ObjectKind.VIEW in kind:
-            types.extend((TABLE_TYPE_VIEW, TABLE_TYPE_SYSTEM_VIEW))
+            types.append(TABLE_TYPE_VIEW)
+            if filter_names is not None:
+                types.append(TABLE_TYPE_SYSTEM_VIEW)
         # MonetDB has no materialized views.
 
         scopes: list[str] = []

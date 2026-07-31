@@ -809,12 +809,13 @@ def test_dec2025_reserved_words_are_quoted_in_ddl(engine: Engine) -> None:
     assert reflected == set(scanner_only)
 
 
-def test_system_catalog_table_can_be_reflected_when_named(engine: Engine) -> None:
+def test_system_catalog_objects_are_only_reflected_when_named(engine: Engine) -> None:
     inspector = inspect(engine)
 
     assert inspector.has_table("keys", schema="sys")
     assert {column["name"] for column in inspector.get_columns("keys", schema="sys")} >= {"id", "table_id", "type"}
-    assert "keys" in inspector.get_table_names(schema="sys")
+    assert "keys" not in inspector.get_table_names(schema="sys")
+    assert "columns" not in inspector.get_view_names(schema="sys")
 
 
 def test_unique_index_drop_removes_the_backing_constraint(engine: Engine) -> None:

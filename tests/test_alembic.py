@@ -1,5 +1,6 @@
 from collections.abc import Iterator
-from typing import Any
+from itertools import product
+from typing import Any, cast
 
 import pytest
 from alembic.autogenerate import produce_migrations, render_python_code
@@ -11,6 +12,8 @@ from sqlalchemy import (
     BigInteger,
     Column,
     Engine,
+    ForeignKey,
+    ForeignKeyConstraint,
     Integer,
     MetaData,
     String,
@@ -53,6 +56,14 @@ def _autogenerate(engine: Engine, target: MetaData) -> str:
         assert upgrade_ops is not None
         # The migration context carries the dialect's render_type hook.
         return render_python_code(upgrade_ops, migration_context=context)
+
+
+def _autogenerate_diffs(engine: Engine, target: MetaData) -> list[Any]:
+    with engine.connect() as connection:
+        context = MigrationContext.configure(connection)
+        upgrade_ops = produce_migrations(context, target).upgrade_ops
+        assert upgrade_ops is not None
+        return upgrade_ops.as_diffs()
 
 
 @pytest.fixture
@@ -145,6 +156,99 @@ def test_autogenerate_detects_schema_differences(engine: Engine) -> None:
     assert "op.add_column('ag_keep'" in code
     # ag_keep.id already exists and must not be re-added.
     assert code.count("op.add_column('ag_keep'") == 1
+
+
+def test_autogenerate_compares_all_foreign_key_actions(engine: Engine) -> None:
+    actions: tuple[str | None, ...] = (None, "RESTRICT", "NO ACTION", "CASCADE", "SET NULL", "SET DEFAULT")
+    database = MetaData()
+    Table("fk_parent", database, Column("id", Integer, primary_key=True))
+    target = MetaData()
+    Table("fk_parent", target, Column("id", Integer, primary_key=True))
+
+    expected_changed: set[str] = set()
+    for database_index, model_index in product(range(len(actions)), repeat=2):
+        database_action = actions[database_index]
+        model_action = actions[model_index]
+        table_name = f"fk_{database_index}_{model_index}"
+        Table(
+            table_name,
+            database,
+            Column("id", Integer, primary_key=True),
+            Column(
+                "parent_id",
+                Integer,
+                ForeignKey("fk_parent.id", ondelete=database_action, onupdate=database_action),
+            ),
+        )
+        Table(
+            table_name,
+            target,
+            Column("id", Integer, primary_key=True),
+            Column(
+                "parent_id",
+                Integer,
+                ForeignKey("fk_parent.id", ondelete=model_action, onupdate=model_action),
+            ),
+        )
+        if (database_action or "RESTRICT") != (model_action or "RESTRICT"):
+            expected_changed.add(table_name)
+
+    database.create_all(engine)
+    diffs = _autogenerate_diffs(engine, target)
+    foreign_key_diffs = [diff for diff in diffs if diff[0] in {"add_fk", "remove_fk"}]
+    changed = {cast(ForeignKeyConstraint, diff[1]).table.name for diff in foreign_key_diffs}
+
+    assert changed == expected_changed
+    assert len(foreign_key_diffs) == len(expected_changed) * 2
+    assert len(diffs) == len(foreign_key_diffs)
+
+
+def test_foreign_key_actions_are_reflected_independently(engine: Engine) -> None:
+    metadata = MetaData()
+    Table("fk_parent", metadata, Column("id", Integer, primary_key=True))
+    Table(
+        "fk_asymmetric",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column(
+            "parent_id",
+            Integer,
+            ForeignKey("fk_parent.id", ondelete="CASCADE", onupdate="SET NULL"),
+        ),
+    )
+    metadata.create_all(engine)
+
+    [foreign_key] = inspect(engine).get_foreign_keys("fk_asymmetric")
+
+    assert foreign_key.get("options", {}) == {"ondelete": "CASCADE", "onupdate": "SET NULL"}
+
+
+def test_autogenerate_round_trips_all_delete_update_action_pairs(engine: Engine) -> None:
+    actions: tuple[str | None, ...] = (None, "RESTRICT", "NO ACTION", "CASCADE", "SET NULL", "SET DEFAULT")
+    database = MetaData()
+    Table("fk_parent", database, Column("id", Integer, primary_key=True))
+    target = MetaData()
+    Table("fk_parent", target, Column("id", Integer, primary_key=True))
+
+    for delete_index, update_index in product(range(len(actions)), repeat=2):
+        ondelete = actions[delete_index]
+        onupdate = actions[update_index]
+        table_name = f"fk_pair_{delete_index}_{update_index}"
+        for metadata in (database, target):
+            Table(
+                table_name,
+                metadata,
+                Column("id", Integer, primary_key=True),
+                Column(
+                    "parent_id",
+                    Integer,
+                    ForeignKey("fk_parent.id", ondelete=ondelete, onupdate=onupdate),
+                ),
+            )
+
+    database.create_all(engine)
+
+    assert _autogenerate_diffs(engine, target) == []
 
 
 def test_autogenerate_renders_pydantic_json_as_a_plain_json_column(engine: Engine) -> None:
