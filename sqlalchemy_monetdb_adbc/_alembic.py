@@ -49,10 +49,12 @@ class MonetDBImpl(DefaultImpl):
         }
 
         for signature in conn_fk_by_sig.keys() & metadata_fk_by_sig.keys():
+            conn_fk = conn_fk_by_sig[signature]
             metadata_fk = metadata_fk_by_sig[signature]
-            if metadata_fk.ondelete is None and metadata_fk.onupdate is None:
-                metadata_fk.ondelete = "RESTRICT"
-                metadata_fk.onupdate = "RESTRICT"
+            if metadata_fk.ondelete is None and conn_fk.ondelete == "RESTRICT":
+                conn_fk.ondelete = None
+            if metadata_fk.onupdate is None and conn_fk.onupdate == "RESTRICT":
+                conn_fk.onupdate = None
 
     def render_type(self, type_obj: Any, autogen_context: Any) -> str | Literal[False]:
         # A migration describes the database schema, so a PydanticJSON column
