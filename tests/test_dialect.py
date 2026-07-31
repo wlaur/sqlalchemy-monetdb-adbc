@@ -6,9 +6,12 @@ import adbc_driver_manager
 import pyarrow as pa
 import pytest
 from adbc_driver_manager.dbapi import Connection as ADBCConnection
+from alembic.migration import MigrationContext
 from sqlalchemy import (
     JSON,
     Column,
+    ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     MetaData,
@@ -163,6 +166,34 @@ def test_alembic_unquotes_exactly_one_sql_string_layer() -> None:
         "CURRENT_TIMESTAMP",
         "CURRENT_TIMESTAMP",
     )
+
+
+def _foreign_key_constraint(ondelete: str | None, onupdate: str | None) -> ForeignKeyConstraint:
+    metadata = MetaData()
+    Table("parent", metadata, Column("id", Integer, primary_key=True))
+    child = Table(
+        "child",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("parent_id", Integer, ForeignKey("parent.id", ondelete=ondelete, onupdate=onupdate)),
+    )
+    return next(iter(child.foreign_key_constraints))
+
+
+def test_alembic_normalizes_reflected_restrict_only_for_unspecified_model_actions() -> None:
+    implementation = cast(
+        MonetDBImpl,
+        MigrationContext.configure(dialect=MonetDBADBCDialect()).impl,
+    )
+    reflected = _foreign_key_constraint("RESTRICT", "CASCADE")
+    model = _foreign_key_constraint(None, "CASCADE")
+
+    implementation.correct_for_autogen_foreignkeys({reflected}, {model})
+
+    assert reflected.ondelete is None
+    assert reflected.onupdate == "CASCADE"
+    assert model.ondelete is None
+    assert model.onupdate == "CASCADE"
 
 
 class _CompileConnection:

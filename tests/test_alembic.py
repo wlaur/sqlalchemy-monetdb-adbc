@@ -190,7 +190,13 @@ def test_autogenerate_compares_all_foreign_key_actions(engine: Engine) -> None:
                 ForeignKey("fk_parent.id", ondelete=model_action, onupdate=model_action),
             ),
         )
-        if (database_action or "RESTRICT") != (model_action or "RESTRICT"):
+        reflected_action = database_action or "RESTRICT"
+        if reflected_action == "NO ACTION":
+            reflected_action = None
+        if model_action is None and reflected_action == "RESTRICT":
+            reflected_action = None
+        model_signature_action = None if model_action == "NO ACTION" else model_action
+        if reflected_action != model_signature_action:
             expected_changed.add(table_name)
 
     database.create_all(engine)
