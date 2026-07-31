@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sqlalchemy-monetdb-adbc"
-version = "0.3.2"
+version = "0.3.3"
 description = "SQLAlchemy dialect for MonetDB over ADBC"
 authors = [{ name = "William Laurén", email = "lauren.william.a@gmail.com" }]
 requires-python = ">=3.13"
