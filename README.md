@@ -38,7 +38,7 @@ Regular expression matching is not available: MonetDB's `~` is `mbr_contains`,
 a geometry operator, so `regexp_match()` raises rather than producing SQL that
 means something else. `regexp_replace()` works.
 
-The dialect requires `adbc-driver-monetdb` 0.10.1 or newer, which coalesces
+The dialect requires `adbc-driver-monetdb` 0.10.4 or newer, which coalesces
 producer batches into adaptive byte-budgeted COPY windows, streams bounded
 uploads, and prevents client-side ingest failures from committing partial
 appends. For an append to a constrained table, its default `auto` policy uses
@@ -49,7 +49,8 @@ server-side staging is unsuitable; see the driver documentation for its
 transaction, permission, and MonetDB-version behavior. The driver also reports
 truthful row counts, caches prepared statements per connection, executes one-row
 bound DML without a savepoint, and returns small results from MonetDB's initial
-reply. One
+reply. Append columns prefer exact names before falling back to case-insensitive
+matching, preserving distinct quoted identifiers such as `"x"` and `"X"`. One
 `DRIVER-WORKAROUND` remains in the source for upstream Apache Arrow ADBC
 behavior: ADBC always returns an Arrow stream, so the DB-API layer reports an
 empty `description` rather than `None` for statements that produce no result
@@ -60,6 +61,11 @@ set, and SQLAlchemy needs `None` to decide that a statement returned no rows.
 - A stock login lands in the `sys` schema, where system views already occupy
   ordinary table names such as `users` and `columns`. Create and use a schema of
   your own.
+- Bulk reflection with `Inspector.get_table_names()` and
+  `Inspector.get_view_names()` excludes MonetDB-owned system objects, including
+  when `schema="sys"` is explicit. Named reflection such as `has_table()` and
+  `get_columns()` can inspect those objects. Query the MonetDB catalog directly
+  when a complete system inventory is required.
 - Self-referential foreign keys are added by `ALTER TABLE` after the table
   exists, because MonetDB cannot declare them inline. MonetDB then enforces
   them one statement at a time rather than at statement end, so on such a table
