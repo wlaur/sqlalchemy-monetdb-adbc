@@ -13,10 +13,6 @@ without a parameter bracket matches every parametrisation of that test.
 from typing import Final
 
 KNOWN_FAILURES: Final[dict[str, str]] = {
-    # MonetDB cannot infer a type for an expression built only from parameters.
-    # "SELECT ? = ?" is rejected outright with "Cannot have a parameter (?) on
-    # both sides of an expression".
-    "IntegerTest::test_huge_int_auto_accommodation": ("MonetDB rejects an expression with a parameter on both sides"),
     # SQLAlchemy renders true division as "? / CAST(? AS DECIMAL(18, 3))",
     # casting one side to promote the result. MonetDB guesses tinyint for the
     # untyped left parameter and then reads the division as interval
