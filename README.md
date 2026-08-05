@@ -38,19 +38,22 @@ Regular expression matching is not available: MonetDB's `~` is `mbr_contains`,
 a geometry operator, so `regexp_match()` raises rather than producing SQL that
 means something else. `regexp_replace()` works.
 
-The dialect requires `adbc-driver-monetdb` 0.10.4 or newer, which coalesces
-producer batches into adaptive byte-budgeted COPY windows, streams bounded
-uploads, and prevents client-side ingest failures from committing partial
-appends. For an append to a constrained table, its default `auto` policy uses
-bounded staging and one target insert so primary-key validation does not repeat
-for every physical upload window. Applications can select the diagnostic
-`direct` policy through `adbc.monetdb.constrained_append` when
-server-side staging is unsuitable; see the driver documentation for its
-transaction, permission, and MonetDB-version behavior. The driver also reports
-truthful row counts, caches prepared statements per connection, executes one-row
-bound DML without a savepoint, and returns small results from MonetDB's initial
-reply. Append columns prefer exact names before falling back to case-insensitive
-matching, preserving distinct quoted identifiers such as `"x"` and `"X"`. One
+The dialect requires `adbc-driver-monetdb` 0.12.3 or newer. This version safely
+falls back to typed literal execution when MonetDB cannot execute a prepared
+query over remote tables while retaining prepared execution for normal query
+shapes. The driver also coalesces producer batches into adaptive byte-budgeted
+COPY windows, streams bounded uploads, and prevents client-side ingest failures
+from committing partial appends. For an append to a constrained table, its
+default `auto` policy uses bounded staging and one target insert so primary-key
+validation does not repeat for every physical upload window. Applications can
+select the diagnostic `direct` policy through
+`adbc.monetdb.constrained_append` when server-side staging is unsuitable; see
+the driver documentation for its transaction, permission, and MonetDB-version
+behavior. The driver also reports truthful row counts, caches prepared
+statements per connection, executes one-row bound DML without a savepoint, and
+returns small results from MonetDB's initial reply. Append columns prefer exact
+names before falling back to case-insensitive matching, preserving distinct
+quoted identifiers such as `"x"` and `"X"`. One
 `DRIVER-WORKAROUND` remains in the source for upstream Apache Arrow ADBC
 behavior: ADBC always returns an Arrow stream, so the DB-API layer reports an
 empty `description` rather than `None` for statements that produce no result
