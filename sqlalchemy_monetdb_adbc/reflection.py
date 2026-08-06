@@ -7,9 +7,6 @@ from sqlalchemy.sql import sqltypes
 
 from sqlalchemy_monetdb_adbc.constants import (
     TABLE_TYPE_LOCAL_TEMPORARY,
-    TABLE_TYPE_MERGE,
-    TABLE_TYPE_REMOTE,
-    TABLE_TYPE_REPLICA,
     TABLE_TYPE_TABLE,
     TABLE_TYPE_VIEW,
 )
@@ -95,18 +92,14 @@ class MonetDBReflection:
 
     @reflection.cache
     def get_table_names(self, connection: Connection, schema: str | None = None, **kw: Any) -> list[str]:
-        query = text(
-            "SELECT name FROM sys.tables "
-            "WHERE type IN (:table, :merge, :remote, :replica) AND schema_id = :schema_id "
-            "ORDER BY name"
-        )
+        # Bulk discovery feeds MetaData.reflect and Alembic autogenerate. Only
+        # ordinary local tables can be represented and round-tripped by their
+        # generic DDL; MonetDB merge, remote, and replica tables cannot.
+        query = text("SELECT name FROM sys.tables WHERE type = :table AND schema_id = :schema_id ORDER BY name")
         rows = connection.execute(
             query,
             {
                 "table": TABLE_TYPE_TABLE,
-                "merge": TABLE_TYPE_MERGE,
-                "remote": TABLE_TYPE_REMOTE,
-                "replica": TABLE_TYPE_REPLICA,
                 "schema_id": self._schema_id(connection, schema),
             },
         )
