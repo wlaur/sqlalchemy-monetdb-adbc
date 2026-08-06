@@ -32,7 +32,7 @@ from sqlalchemy.pool import QueuePool, StaticPool
 from sqlalchemy.schema import DropIndex, SetColumnComment
 from sqlalchemy.sql import sqltypes
 
-from sqlalchemy_monetdb_adbc import INET, MonetDBADBCDialect, ParquetArrowStream, ParquetEpochUnit
+from sqlalchemy_monetdb_adbc import INET, SECOND_INTERVAL, MonetDBADBCDialect, ParquetArrowStream, ParquetEpochUnit
 from sqlalchemy_monetdb_adbc._alembic import MonetDBImpl
 from sqlalchemy_monetdb_adbc._convert import batch_to_rows
 from sqlalchemy_monetdb_adbc.arrow import compile_arrow_statement
@@ -74,6 +74,15 @@ def test_inet_columns_are_cast_for_binary_results() -> None:
     compiled = select(table.c.address).compile(dialect=MonetDBADBCDialect())
 
     assert str(compiled) == "SELECT CAST(network.address AS VARCHAR(128)) AS address \nFROM network"
+
+
+def test_generic_interval_uses_native_second_interval_without_datetime_conversion() -> None:
+    dialect = MonetDBADBCDialect()
+    interval = sqltypes.Interval().dialect_impl(dialect)
+
+    assert isinstance(interval, SECOND_INTERVAL)
+    assert str(interval.compile(dialect=dialect)) == "INTERVAL SECOND"
+    assert interval.bind_processor(dialect) is None
 
 
 def test_import_dbapi_loads_monetdb_adbc_driver() -> None:
