@@ -35,6 +35,7 @@ from sqlalchemy_monetdb_adbc.constants import (
     TABLE_TYPE_LOCAL_TEMPORARY,
     TABLE_TYPE_SYSTEM_TABLE,
     TABLE_TYPE_SYSTEM_VIEW,
+    TABLE_TYPE_TABLE,
     TABLE_TYPE_VIEW,
     TABLE_TYPES,
 )
@@ -193,7 +194,11 @@ class MonetDBMultiReflection:
 
         types: list[int] = []
         if ObjectKind.TABLE in kind:
-            types.extend(TABLE_TYPES)
+            # Unfiltered calls are bulk discovery and must match
+            # get_table_names: SQLAlchemy and Alembic can own only ordinary
+            # local tables. Explicit names retain access to MonetDB-specific
+            # merge, remote, and replica tables for direct reflection.
+            types.extend(TABLE_TYPES if filter_names is not None else (TABLE_TYPE_TABLE,))
             if filter_names is not None:
                 types.append(TABLE_TYPE_SYSTEM_TABLE)
         if ObjectKind.VIEW in kind:

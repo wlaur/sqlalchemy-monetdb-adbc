@@ -158,6 +158,36 @@ def test_autogenerate_detects_schema_differences(engine: Engine) -> None:
     assert code.count("op.add_column('ag_keep'") == 1
 
 
+def test_autogenerate_ignores_monetdb_specific_table_kinds(engine: Engine) -> None:
+    target = MetaData()
+    Table("ag_owned_local", target, Column("id", Integer))
+    target.create_all(engine)
+    special_names = ("ag_unowned_merge", "ag_unowned_remote", "ag_unowned_replica")
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql("CREATE MERGE TABLE ag_unowned_merge (id INTEGER)")
+        connection.exec_driver_sql(
+            "CREATE REMOTE TABLE ag_unowned_remote (id INTEGER) "
+            "ON 'mapi:monetdb://localhost:50000/test/sys/ag_owned_local' "
+            "WITH USER 'monetdb' PASSWORD 'monetdb'"
+        )
+        connection.exec_driver_sql("CREATE REPLICA TABLE ag_unowned_replica (id INTEGER)")
+
+    try:
+        inspector = inspect(engine)
+        assert set(special_names).isdisjoint(inspector.get_table_names())
+        assert set(special_names).isdisjoint(name for _schema, name in inspector.get_multi_columns())
+        for name in special_names:
+            assert inspector.has_table(name)
+            assert [column["name"] for column in inspector.get_columns(name)] == ["id"]
+
+        assert _autogenerate_diffs(engine, target) == []
+    finally:
+        with engine.begin() as connection:
+            for name in reversed(special_names):
+                connection.exec_driver_sql(f"DROP TABLE {name}")
+
+
 def test_autogenerate_compares_all_foreign_key_actions(engine: Engine) -> None:
     actions: tuple[str | None, ...] = (None, "RESTRICT", "NO ACTION", "CASCADE", "SET NULL", "SET DEFAULT")
     database = MetaData()
