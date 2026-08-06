@@ -24,6 +24,7 @@ from sqlalchemy import (
     Identity,
     Index,
     Integer,
+    Interval,
     LargeBinary,
     MetaData,
     Numeric,
@@ -49,6 +50,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 from sqlalchemy_monetdb_adbc import (
     HUGEINT,
+    SECOND_INTERVAL,
     PydanticJSON,
     fetch_arrow_table,
     ingest_arrow,
@@ -1096,6 +1098,21 @@ def test_large_binary_uses_the_dbapi_binary_constructor(engine: Engine) -> None:
     with engine.begin() as connection:
         connection.execute(insert(table), [{"payload": b"\x00\xff binary"}])
         assert connection.execute(select(table.c.payload)).scalar() == b"\x00\xff binary"
+
+
+def test_generic_interval_round_trip_and_predicate(engine: Engine) -> None:
+    metadata = MetaData()
+    table = Table("generic_interval", metadata, Column("id", Integer), Column("window", Interval, nullable=False))
+    metadata.create_all(engine)
+    window = datetime.timedelta(hours=1)
+
+    with engine.begin() as connection:
+        connection.execute(insert(table), [{"id": 1, "window": window}])
+        assert connection.execute(select(table.c.id).where(table.c.window == window)).scalar_one() == 1
+        assert connection.execute(select(table.c.window)).scalar_one() == window
+
+    reflected = {column["name"]: column["type"] for column in inspect(engine).get_columns(table.name)}
+    assert isinstance(reflected["window"], SECOND_INTERVAL)
 
 
 class _Content(BaseModel):
