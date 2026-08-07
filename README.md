@@ -14,21 +14,18 @@ and is validated against a live MonetDB server.
 ### Dialect compliance suite
 
 SQLAlchemy's own dialect suite runs from `suite/` (see Development) and reports
-no failures: 1237 passed, 16 xfailed, 388 skipped. Each xfail is a MonetDB or
+no failures: 1248 passed, 5 xfailed, 388 skipped. Each xfail is a MonetDB or
 driver limitation, listed with its reason in `suite/known_failures.py`. They are
 marked xfail rather than skipped so that the tests still run, and report XPASS
 if a future release gains the behaviour:
 
-- MonetDB infers no type for a bare parameter, so `WHERE ? = ?` is rejected
-  outright. A cast resolves it, but SQLAlchemy emits the parameter alone. This
-  is most of the remainder.
-- Untyped parameters also change arithmetic: `SELECT ? / ?` with `(15, 10)`
-  returns `1`, not `1.5`, and dividing an untyped parameter by a decimal is
-  read as interval arithmetic.
+- An untyped parameter divided by a decimal is read as interval arithmetic,
+  which is what SQLAlchemy emits for true division.
 - No lastrowid, which is why generated values come back through `RETURNING`.
-- `RETURNING *` needs an explicit column list.
 - JSON is normalized on input, so a document does not round-trip byte for byte.
-- Some identifiers legal elsewhere are rejected, such as one containing `%`.
+- Some identifiers legal elsewhere are rejected, such as one starting with `%`.
+- Dropping some suite tables leaves an orphan sequence MonetDB then refuses to
+  drop, which the dialect correctly reports as an existing sequence.
 
 Common table expressions are fully supported, including recursive CTEs, CTEs
 over `VALUES`, and CTEs driving `UPDATE`/`DELETE`. MonetDB's `WITH` accepts only
@@ -38,15 +35,17 @@ Regular expression matching is not available: MonetDB's `~` is `mbr_contains`,
 a geometry operator, so `regexp_match()` raises rather than producing SQL that
 means something else. `regexp_replace()` works.
 
-The dialect requires `adbc-driver-monetdb` 0.12.3 or newer. This version safely
+The dialect requires `adbc-driver-monetdb` 0.12.6 or newer. This version safely
 falls back to typed literal execution when MonetDB cannot execute a prepared
 query over remote tables while retaining prepared execution for normal query
-shapes. The driver also coalesces producer batches into adaptive byte-budgeted
-COPY windows, streams bounded uploads, and prevents client-side ingest failures
-from committing partial appends. For an append to a constrained table, its
-default `auto` policy uses bounded staging and one target insert so primary-key
-validation does not repeat for every physical upload window. Applications can
-select the diagnostic `direct` policy through
+shapes. It verifies the first execution of every prepared row query, so a view
+over a remote table and a parenthesized compound select fall back like a direct
+remote-table query does. The driver also coalesces producer batches into
+adaptive byte-budgeted COPY windows, streams bounded uploads, and prevents
+client-side ingest failures from committing partial appends. For an append to a
+constrained table, its default `auto` policy uses bounded staging and one target
+insert so primary-key validation does not repeat for every physical upload
+window. Applications can select the diagnostic `direct` policy through
 `adbc.monetdb.constrained_append` when server-side staging is unsuitable; see
 the driver documentation for its transaction, permission, and MonetDB-version
 behavior. The driver also reports truthful row counts, caches prepared
@@ -66,9 +65,14 @@ set, and SQLAlchemy needs `None` to decide that a statement returned no rows.
   your own.
 - Bulk reflection with `Inspector.get_table_names()` and
   `Inspector.get_view_names()` excludes MonetDB-owned system objects, including
-  when `schema="sys"` is explicit. Named reflection such as `has_table()` and
-  `get_columns()` can inspect those objects. Query the MonetDB catalog directly
-  when a complete system inventory is required.
+  when `schema="sys"` is explicit. `get_table_names()` also excludes merge,
+  remote, and replica tables, because generic SQLAlchemy DDL cannot round-trip
+  them and Alembic autogenerate would otherwise propose to own them. Named
+  reflection such as `has_table()`, `get_columns()`, and
+  `Table(..., autoload_with=engine)` reaches every one of those objects, but
+  `MetaData.reflect(only=[...])` raises `InvalidRequestError` for them because
+  SQLAlchemy intersects `only` with `get_table_names()`. Query the MonetDB
+  catalog directly when a complete inventory is required.
 - Self-referential foreign keys are added by `ALTER TABLE` after the table
   exists, because MonetDB cannot declare them inline. MonetDB then enforces
   them one statement at a time rather than at statement end, so on such a table
