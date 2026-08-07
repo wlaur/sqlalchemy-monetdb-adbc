@@ -15,6 +15,7 @@ from sqlalchemy import (
     ForeignKey,
     ForeignKeyConstraint,
     Integer,
+    Interval,
     MetaData,
     String,
     Table,
@@ -310,6 +311,16 @@ def test_autogenerate_sees_no_change_for_an_unchanged_pydantic_json_column(engin
 
     assert "op.add_column" not in code
     assert "op.alter_column" not in code
+
+
+def test_autogenerate_sees_no_change_for_a_generic_interval_column(engine: Engine) -> None:
+    metadata = MetaData()
+    Table("ag_interval", metadata, Column("id", Integer, primary_key=True), Column("window", Interval))
+    metadata.create_all(engine)
+
+    # Interval resolves to the native SECOND_INTERVAL the column reflects as,
+    # so the model and the database describe the same type.
+    assert _autogenerate_diffs(engine, metadata) == []
 
 
 def test_migration_creates_a_usable_pydantic_json_column(operations: tuple[Operations, Any], engine: Engine) -> None:
