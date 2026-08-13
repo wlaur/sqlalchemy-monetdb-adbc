@@ -196,6 +196,30 @@ def test_statements_without_a_result_set_do_not_return_rows(engine: Engine) -> N
         assert connection.execute(text("SELECT * FROM no_rows")).returns_rows is True
 
 
+def test_is_boolean_comparisons_execute_with_null_safe_semantics(engine: Engine) -> None:
+    metadata = MetaData()
+    flags = Table("bool_flags", metadata, Column("id", Integer), Column("active", Boolean))
+    metadata.create_all(engine)
+
+    with engine.begin() as connection:
+        connection.execute(
+            insert(flags),
+            [{"id": 1, "active": True}, {"id": 2, "active": False}, {"id": 3, "active": None}],
+        )
+
+        def ids(criterion: Any) -> list[int]:
+            return sorted(connection.execute(select(flags.c.id).where(criterion)).scalars())
+
+        assert ids(flags.c.active.is_(True)) == [1]
+        assert ids(flags.c.active.is_(False)) == [2]
+        assert ids(flags.c.active.is_not(True)) == [2, 3]
+        assert ids(flags.c.active.is_not(False)) == [1, 3]
+        assert ids(flags.c.active.is_(None)) == [3]
+        assert ids(flags.c.active.is_not(None)) == [1, 2]
+        assert ids(flags.c.active) == [1]
+        assert ids(~flags.c.active) == [2]
+
+
 def test_raw_adbc_connection_shares_the_sqlalchemy_transaction(engine: Engine) -> None:
     import pyarrow as pa
 
