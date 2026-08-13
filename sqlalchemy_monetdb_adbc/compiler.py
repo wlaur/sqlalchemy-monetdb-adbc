@@ -6,7 +6,7 @@ from sqlalchemy import exc
 from sqlalchemy import types as sqltypes
 from sqlalchemy.sql import compiler, operators
 from sqlalchemy.sql.ddl import CreateIndex, CreateSequence, DropIndex, DropSequence
-from sqlalchemy.sql.elements import ClauseElement, UnaryExpression
+from sqlalchemy.sql.elements import ClauseElement, Null, UnaryExpression
 from sqlalchemy.sql.expression import cast as cast_expression
 from sqlalchemy.sql.schema import Column, ForeignKeyConstraint, Sequence, Table
 from sqlalchemy.sql.selectable import Select
@@ -360,6 +360,18 @@ class MonetDBCompiler(compiler.SQLCompiler):
             for type_ in types
         )
         return f"SELECT {casts} WHERE 1 <> 1"
+
+    def visit_is__binary(self, binary: Any, operator: Any, **kw: Any) -> str:
+        # MonetDB's IS grammar accepts only [NOT] NULL and [NOT] DISTINCT FROM,
+        # never IS true/false; IS NOT DISTINCT FROM is the same null-safe test.
+        if isinstance(binary.right, Null):
+            return self._generate_generic_binary(binary, " IS ", **kw)
+        return self._generate_generic_binary(binary, " IS NOT DISTINCT FROM ", **kw)
+
+    def visit_is_not_binary(self, binary: Any, operator: Any, **kw: Any) -> str:
+        if isinstance(binary.right, Null):
+            return self._generate_generic_binary(binary, " IS NOT ", **kw)
+        return self._generate_generic_binary(binary, " IS DISTINCT FROM ", **kw)
 
     def render_literal_value(self, value: Any, type_: sqltypes.TypeEngine[Any]) -> str:
         rendered = super().render_literal_value(value, type_)

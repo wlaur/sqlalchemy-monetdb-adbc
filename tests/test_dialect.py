@@ -9,6 +9,7 @@ from adbc_driver_manager.dbapi import Connection as ADBCConnection
 from alembic.migration import MigrationContext
 from sqlalchemy import (
     JSON,
+    Boolean,
     Column,
     ForeignKey,
     ForeignKeyConstraint,
@@ -74,6 +75,34 @@ def test_inet_columns_are_cast_for_binary_results() -> None:
     compiled = select(table.c.address).compile(dialect=MonetDBADBCDialect())
 
     assert str(compiled) == "SELECT CAST(network.address AS VARCHAR(128)) AS address \nFROM network"
+
+
+def test_is_boolean_comparisons_compile_to_distinct_from() -> None:
+    table = Table("flags", MetaData(), Column("active", Boolean), Column("shadow", Boolean))
+    dialect = MonetDBADBCDialect()
+
+    def where_clause(criterion: Any) -> str:
+        compiled = str(select(table.c.active).where(criterion).compile(dialect=dialect))
+        return compiled.split("WHERE ", 1)[1]
+
+    assert where_clause(table.c.active.is_(True)) == "flags.active IS NOT DISTINCT FROM true"
+    assert where_clause(table.c.active.is_(False)) == "flags.active IS NOT DISTINCT FROM false"
+    assert where_clause(table.c.active.is_not(True)) == "flags.active IS DISTINCT FROM true"
+    assert where_clause(table.c.active.is_not(False)) == "flags.active IS DISTINCT FROM false"
+    assert where_clause(~table.c.active.is_(True)) == "flags.active IS DISTINCT FROM true"
+    assert where_clause(table.c.active.is_(table.c.shadow)) == "flags.active IS NOT DISTINCT FROM flags.shadow"
+    assert where_clause(table.c.active.is_distinct_from(table.c.shadow)) == "flags.active IS DISTINCT FROM flags.shadow"
+
+
+def test_is_null_comparisons_keep_native_rendering() -> None:
+    table = Table("flags", MetaData(), Column("active", Boolean))
+    dialect = MonetDBADBCDialect()
+
+    compiled = str(select(table.c.active).where(table.c.active.is_(None)).compile(dialect=dialect))
+    assert compiled.endswith("WHERE flags.active IS NULL")
+
+    compiled = str(select(table.c.active).where(table.c.active.is_not(None)).compile(dialect=dialect))
+    assert compiled.endswith("WHERE flags.active IS NOT NULL")
 
 
 def test_generic_interval_uses_native_second_interval_without_datetime_conversion() -> None:
