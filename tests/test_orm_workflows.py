@@ -16,7 +16,7 @@ import pytest
 from orm_models import IngestIdentity, ORMBase, Reading, Sensor, SensorTags, TagDetails, TypeMatrix
 from pydantic import ValidationError
 from sqlalchemy import JSON, Engine, Integer, Table, create_engine, delete, func, inspect, select, text, update
-from sqlalchemy.exc import DBAPIError, IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError, ProgrammingError
 from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
@@ -35,7 +35,7 @@ pytestmark = pytest.mark.integration
 
 DRIVER_PRESERVES_CONSTRAINED_APPEND_TRANSACTION = tuple(
     int(part) for part in adbc_driver_monetdb.__version__.split(".")
-) >= (0, 10, 0)
+) < (0, 12, 10)
 
 
 @pytest.fixture(autouse=True)
@@ -281,7 +281,7 @@ def test_orm_transactions_savepoints_and_ingest_poison(engine: Engine) -> None:
 
     duplicate_ts = datetime.datetime(2026, 7, 28, 12, 0)
     with Session(engine) as session:
-        session.add(Sensor(id=5, name="preserved", active=True))
+        session.add(Sensor(id=5, name="prior-write", active=True))
         session.flush()
         data = _reading_table([(2, duplicate_ts), (2, duplicate_ts)])
         with pytest.raises(adbc_driver_manager.IntegrityError):
@@ -294,13 +294,22 @@ def test_orm_transactions_savepoints_and_ingest_poison(engine: Engine) -> None:
         if DRIVER_PRESERVES_CONSTRAINED_APPEND_TRANSACTION:
             session.commit()
         else:
-            with pytest.raises(DBAPIError):
+            with pytest.raises(ProgrammingError, match="ROLLBACK is required") as commit_error:
                 session.commit()
+            assert isinstance(commit_error.value.orig, adbc_driver_manager.ProgrammingError)
+            assert commit_error.value.orig.sqlstate == "25000"
             session.rollback()
         assert session.scalar(select(func.count()).select_from(Reading)) == 0
         assert session.scalar(select(func.count()).select_from(Sensor)) == (
             3 if DRIVER_PRESERVES_CONSTRAINED_APPEND_TRANSACTION else 2
         )
+        assert (session.get(Sensor, 5) is not None) is DRIVER_PRESERVES_CONSTRAINED_APPEND_TRANSACTION
+        session.add(Sensor(id=6, name="recovered", active=True))
+        session.commit()
+
+    with Session(engine) as session:
+        assert session.get(Sensor, 6) is not None
+        assert session.scalar(select(func.count()).select_from(Reading)) == 0
 
 
 def test_arrow_ingest_and_identity_interoperate_with_orm(engine: Engine) -> None:

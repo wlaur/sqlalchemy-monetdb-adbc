@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from typing import Any, cast
 
 import adbc_driver_manager
+import adbc_driver_monetdb
 import numpy as np
 import pytest
 from pydantic import BaseModel
@@ -60,6 +61,10 @@ from sqlalchemy_monetdb_adbc import (
 from sqlalchemy_monetdb_adbc.base import RESERVED_WORDS
 
 pytestmark = pytest.mark.integration
+
+DRIVER_REQUIRES_CLEAN_SAVEPOINT_TRANSACTION = tuple(
+    int(part) for part in adbc_driver_monetdb.__version__.split(".")
+) >= (0, 12, 10)
 
 
 @pytest.fixture(autouse=True)
@@ -408,7 +413,8 @@ def test_ingest_arrow_partial_failure_blocks_sqlalchemy_commit(engine: Engine) -
         assert connection.execute(select(table.c.value)).scalars().all() == [4]
 
 
-def test_ingest_arrow_savepoint_atomicity_preserves_prior_work(engine: Engine) -> None:
+@pytest.mark.parametrize("prior_write", [False, True])
+def test_ingest_arrow_savepoint_atomicity_checks_transaction_state(engine: Engine, prior_write: bool) -> None:
     import pyarrow as pa
 
     table = Table(
@@ -418,15 +424,26 @@ def test_ingest_arrow_savepoint_atomicity_preserves_prior_work(engine: Engine) -
     )
     table.create(engine)
     batch = pa.record_batch({"value": pa.array([2, 3], type=pa.int32())})
+    reader_started = False
 
     def batches() -> Iterator[pa.RecordBatch]:
+        nonlocal reader_started
+        reader_started = True
         yield batch
         raise RuntimeError("intentional upstream failure")
 
     with engine.connect() as connection:
-        connection.execute(insert(table), {"value": 1})
+        if prior_write:
+            connection.execute(insert(table), {"value": 1})
         reader = pa.RecordBatchReader.from_batches(batch.schema, batches())
-        with pytest.raises(Exception, match="intentional upstream failure"):
+        rejects_dirty_transaction = prior_write and DRIVER_REQUIRES_CLEAN_SAVEPOINT_TRANSACTION
+        expected_error = adbc_driver_manager.ProgrammingError if rejects_dirty_transaction else Exception
+        expected_message = (
+            "requires a transaction without prior writes"
+            if rejects_dirty_transaction
+            else "intentional upstream failure"
+        )
+        with pytest.raises(expected_error, match=expected_message):
             ingest_arrow(
                 connection,
                 table,
@@ -436,11 +453,12 @@ def test_ingest_arrow_savepoint_atomicity_preserves_prior_work(engine: Engine) -
                     "adbc.monetdb.ingest_atomicity": "savepoint",
                 },
             )
-        assert connection.execute(select(table.c.value)).scalars().all() == [1]
+        assert reader_started is not rejects_dirty_transaction
+        assert connection.execute(select(table.c.value)).scalars().all() == ([1] if prior_write else [])
         connection.commit()
 
     with engine.connect() as connection:
-        assert connection.execute(select(table.c.value)).scalars().all() == [1]
+        assert connection.execute(select(table.c.value)).scalars().all() == ([1] if prior_write else [])
 
 
 def test_ingest_arrow_failure_is_atomic_in_autocommit(engine: Engine) -> None:
