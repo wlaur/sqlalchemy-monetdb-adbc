@@ -233,6 +233,78 @@ def test_orm_crud_workflows_cross_parameter_batches(engine: Engine) -> None:
         assert session.scalar(select(func.count()).select_from(Reading)) == 0
 
 
+def test_orm_update_flushes_preserve_earlier_batches_after_commit(engine: Engine) -> None:
+    with Session(engine) as session:
+        session.add_all(Sensor(id=index, name=f"old-{index}", active=False) for index in range(1, 5))
+        session.commit()
+
+    with Session(engine) as session:
+        sensors = [session.get_one(Sensor, index) for index in range(1, 5)]
+        for batch in (sensors[:2], sensors[2:]):
+            for sensor in batch:
+                sensor.name = f"updated-{sensor.id}"
+                sensor.active = True
+            session.flush()
+        session.commit()
+
+    with Session(engine) as session:
+        assert session.execute(select(Sensor.id, Sensor.name, Sensor.active).order_by(Sensor.id)).all() == [
+            (1, "updated-1", True),
+            (2, "updated-2", True),
+            (3, "updated-3", True),
+            (4, "updated-4", True),
+        ]
+
+
+def test_orm_delete_flushes_preserve_earlier_batches_after_commit(engine: Engine) -> None:
+    with Session(engine) as session:
+        session.add_all(Sensor(id=index, name=f"sensor-{index}", active=True) for index in range(1, 6))
+        session.commit()
+
+    with Session(engine) as session:
+        sensors = [session.get_one(Sensor, index) for index in range(1, 5)]
+        for batch in (sensors[:2], sensors[2:]):
+            for sensor in batch:
+                session.delete(sensor)
+            session.flush()
+        session.commit()
+
+    with Session(engine) as session:
+        assert session.scalars(select(Sensor.id).order_by(Sensor.id)).all() == [5]
+
+
+def test_orm_insert_flush_reuses_keys_deleted_in_same_transaction(engine: Engine) -> None:
+    class BatchBase(DeclarativeBase):
+        pass
+
+    class BatchRow(BatchBase):
+        __tablename__ = "orm_replace_batch"
+
+        id: Mapped[int] = mapped_column(primary_key=True)
+        name: Mapped[str]
+
+    BatchBase.metadata.create_all(engine)
+    try:
+        with Session(engine) as session:
+            session.add_all(BatchRow(id=index, name=f"old-{index}") for index in range(1, 4))
+            session.commit()
+
+        with Session(engine) as session:
+            session.execute(delete(BatchRow).where(BatchRow.id <= 2))
+            session.add_all(BatchRow(id=index, name=f"replacement-{index}") for index in (1, 2))
+            session.flush()
+            session.commit()
+
+        with Session(engine) as session:
+            assert session.execute(select(BatchRow.id, BatchRow.name).order_by(BatchRow.id)).all() == [
+                (1, "replacement-1"),
+                (2, "replacement-2"),
+                (3, "old-3"),
+            ]
+    finally:
+        BatchBase.metadata.drop_all(engine)
+
+
 def test_orm_constraint_errors_recover_after_rollback(engine: Engine) -> None:
     ts = datetime.datetime(2026, 7, 28, 12, 0)
     with Session(engine) as session:

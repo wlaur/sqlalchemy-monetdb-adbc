@@ -226,18 +226,13 @@ class MonetDBADBCDialect(  # pyright: ignore[reportIncompatibleMethodOverride]
         parameters: Any,
         context: Any = None,
     ) -> None:
-        compiled = getattr(context, "compiled", None)
-        if compiled is None:
-            cursor.executemany(statement, parameters)
-            return
-        schema = self._parameter_schema(compiled, statement)
-        _, inferred_schema = cast(MonetDBCursor, cursor).executemany_with_parameter_schema(
-            statement,
-            parameters,
-            schema,
-        )
-        if inferred_schema is not None and inferred_schema != schema:
-            self._remember_parameter_schema(compiled, statement, inferred_schema)
+        rowcount = 0
+        for parameter_set in parameters:
+            self.do_execute(cursor, statement, parameter_set, context)
+            if rowcount >= 0:
+                rowcount = rowcount + cursor.rowcount if cursor.rowcount >= 0 else -1
+        if context is not None:
+            context._rowcount = rowcount
 
     def _parameter_schema(self, compiled: Any, statement: str) -> Any:
         with self._parameter_schemas_lock:
