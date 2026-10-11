@@ -48,9 +48,8 @@ class MonetDBMultiReflection:
     The single-table getters live here rather than beside the rest of the
     catalog code in ``reflection.py`` because they are answered by calling the
     batched method and taking the one entry out. Keeping one implementation of
-    each query is what stops the two shapes from disagreeing: they previously
-    did, and ``get_indexes`` reported nothing at all for a temporary table
-    because only the batched path knew to read the "tmp" catalog.
+    each query keeps both shapes consistent, including temporary-table
+    reflection through the "tmp" catalog.
     """
 
     def _reflect_one(

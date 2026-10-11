@@ -182,8 +182,8 @@ def test_dec2025_scanner_only_reserved_words_are_quoted() -> None:
 
 
 def test_server_version_parser_accepts_suffixes_and_invalid_values() -> None:
-    assert parse_server_version("11.55.7") == (11, 55, 7)
-    assert parse_server_version("MonetDB 11.55.7 (Dec2025-SP3)") == (11, 55, 7)
+    assert parse_server_version("11.55.9") == (11, 55, 9)
+    assert parse_server_version("MonetDB 11.55.9 (Dec2025-SP4)") == (11, 55, 9)
     assert parse_server_version(None) == ()
 
 
