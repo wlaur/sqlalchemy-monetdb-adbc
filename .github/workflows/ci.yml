@@ -72,10 +72,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        monetdb-version: ["11.55.7-2"]
+        monetdb-version: ["11.55.9-1"]
     services:
       monetdb:
-        image: wlaur/monetdb-container:${{ matrix.monetdb-version }}@sha256:22dd41bd10fd7136ca1ef6afaec5cf0c1670f16a84b80785a5fee12aac480eb4
+        image: wlaur/monetdb-container:${{ matrix.monetdb-version }}@sha256:b7238498164cd26a0b7bd9391d51948dca5c69f490f888186d3204320abaecf7
         ports:
           - 50000:50000
         env:

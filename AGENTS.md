@@ -7,7 +7,7 @@ here.
 
 ## Python
 
-- Support Python 3.13 and newer.
+- Support Python 3.13 and newer and MonetDB Dec2025-SP4 (11.55.9) and newer.
 - Use `uv` only, never `pip`, and commit `uv.lock`.
 - Use full typing. Strict pyright, Ruff check/format, and pytest must pass.
 - Do not add `pymonetdb` or `sqlalchemy-monetdb` as runtime dependencies.

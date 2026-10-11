@@ -10,7 +10,6 @@ from collections.abc import Iterator
 from typing import Any, cast
 
 import adbc_driver_manager
-import adbc_driver_monetdb
 import pyarrow as pa
 import pytest
 from orm_models import IngestIdentity, ORMBase, Reading, Sensor, SensorTags, TagDetails, TypeMatrix
@@ -32,10 +31,6 @@ from sqlalchemy_monetdb_adbc import (
 )
 
 pytestmark = pytest.mark.integration
-
-DRIVER_PRESERVES_CONSTRAINED_APPEND_TRANSACTION = tuple(
-    int(part) for part in adbc_driver_monetdb.__version__.split(".")
-) < (0, 12, 10)
 
 
 @pytest.fixture(autouse=True)
@@ -291,19 +286,14 @@ def test_orm_transactions_savepoints_and_ingest_poison(engine: Engine) -> None:
                 data,
                 statement_options={"adbc.monetdb.write_batch_rows": 1},
             )
-        if DRIVER_PRESERVES_CONSTRAINED_APPEND_TRANSACTION:
+        with pytest.raises(ProgrammingError, match="ROLLBACK is required") as commit_error:
             session.commit()
-        else:
-            with pytest.raises(ProgrammingError, match="ROLLBACK is required") as commit_error:
-                session.commit()
-            assert isinstance(commit_error.value.orig, adbc_driver_manager.ProgrammingError)
-            assert commit_error.value.orig.sqlstate == "25000"
-            session.rollback()
+        assert isinstance(commit_error.value.orig, adbc_driver_manager.ProgrammingError)
+        assert commit_error.value.orig.sqlstate == "25000"
+        session.rollback()
         assert session.scalar(select(func.count()).select_from(Reading)) == 0
-        assert session.scalar(select(func.count()).select_from(Sensor)) == (
-            3 if DRIVER_PRESERVES_CONSTRAINED_APPEND_TRANSACTION else 2
-        )
-        assert (session.get(Sensor, 5) is not None) is DRIVER_PRESERVES_CONSTRAINED_APPEND_TRANSACTION
+        assert session.scalar(select(func.count()).select_from(Sensor)) == 2
+        assert session.get(Sensor, 5) is None
         session.add(Sensor(id=6, name="recovered", active=True))
         session.commit()
 

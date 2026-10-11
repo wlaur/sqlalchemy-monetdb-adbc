@@ -9,12 +9,12 @@ single MonetDB connection and transaction boundary.
 ## Status
 
 The dialect covers SQL compilation, types, reflection, transactions, and the ORM,
-and is validated against a live MonetDB server.
+and is validated against MonetDB Dec2025-SP4 (11.55.9), the minimum supported server.
 
 ### Dialect compliance suite
 
 SQLAlchemy's own dialect suite runs from `suite/` (see Development) and reports
-no failures: 1248 passed, 5 xfailed, 388 skipped. Each xfail is a MonetDB or
+no failures: 1260 passed, 5 xfailed, 388 skipped. Each xfail is a MonetDB or
 driver limitation, listed with its reason in `suite/known_failures.py`. They are
 marked xfail rather than skipped so that the tests still run, and report XPASS
 if a future release gains the behaviour:
@@ -35,7 +35,7 @@ Regular expression matching is not available: MonetDB's `~` is `mbr_contains`,
 a geometry operator, so `regexp_match()` raises rather than producing SQL that
 means something else. `regexp_replace()` works.
 
-The dialect requires `adbc-driver-monetdb` 0.12.6 or newer. This version safely
+The dialect requires `adbc-driver-monetdb` 0.13.0 or newer. The driver
 falls back to typed literal execution when MonetDB cannot execute a prepared
 query over remote tables while retaining prepared execution for normal query
 shapes. It verifies the first execution of every prepared row query, so a view
@@ -47,10 +47,9 @@ constrained table, its default `auto` policy uses bounded staging and one target
 insert so primary-key validation does not repeat for every physical upload
 window. Applications can select the diagnostic `direct` policy through
 `adbc.monetdb.constrained_append` when server-side staging is unsuitable; see
-the driver documentation for its transaction, permission, and MonetDB-version
-behavior. The driver also reports truthful row counts, caches prepared
-statements per connection, executes one-row bound DML without a savepoint, and
-returns small results from MonetDB's initial reply. Append columns prefer exact
+the driver documentation for its transaction and memory behavior. The driver also
+reports truthful row counts, caches prepared statements per connection, executes
+one-row bound DML without a savepoint, and returns small results from MonetDB's initial reply. Append columns prefer exact
 names before falling back to case-insensitive matching, preserving distinct
 quoted identifiers such as `"x"` and `"X"`. One
 `DRIVER-WORKAROUND` remains in the source for upstream Apache Arrow ADBC
@@ -156,14 +155,11 @@ PyArrow and NumPy are runtime dependencies for the dialect's Arrow-native
 result layer and optimized Arrow-to-Python object conversion. Polars is
 optional. Arrow-native reads and writes do not convert through NumPy.
 
-The driver removes the avoidable fixed costs found in the release review:
-one-row parameterized DML no longer adds a savepoint pair, and results of up to
-100 rows no longer force a second fetch. The driver also batches `executemany`
-parameters into one multi-row statement when MonetDB can preserve the DB-API
-semantics, and repeated single-batch appends no longer create redundant
-savepoints. Tiny row-oriented SELECTs still carry the fixed cost of receiving
-a canonical Arrow stream across the native boundary; use the Arrow helpers
-below when keeping the result columnar matters.
+One-row parameterized DML executes directly, and results of up to 100 rows arrive
+in the initial reply. The driver batches `executemany` parameters when MonetDB
+can preserve DB-API semantics. Tiny row-oriented SELECTs carry the fixed cost of
+receiving a canonical Arrow stream across the native boundary; use the Arrow
+helpers below when keeping the result columnar matters.
 
 To skip the conversion entirely and keep data columnar, run the query on the
 same connection and take Arrow back:
