@@ -35,7 +35,7 @@ Regular expression matching is not available: MonetDB's `~` is `mbr_contains`,
 a geometry operator, so `regexp_match()` raises rather than producing SQL that
 means something else. `regexp_replace()` works.
 
-The dialect requires `adbc-driver-monetdb` 0.13.0 or newer. The driver
+The dialect requires `adbc-driver-monetdb` 0.13.1 or newer. The driver
 falls back to typed literal execution when MonetDB cannot execute a prepared
 query over remote tables while retaining prepared execution for normal query
 shapes. It verifies the first execution of every prepared row query, so a view
@@ -101,6 +101,21 @@ set, and SQLAlchemy needs `None` to decide that a statement returned no rows.
   binary result protocol.
 - A `UNIQUE` constraint is backed by an index of the same name, so it is
   reflected both by `get_unique_constraints()` and by `get_indexes()`.
+
+### Concurrent transactions
+
+Use one SQLAlchemy connection or ORM session per worker; connections share their
+transaction state with Arrow operations. MonetDB uses optimistic concurrency control:
+a write can fail immediately, or COMMIT can reject a transaction whose earlier writes
+succeeded. A commit conflict carries SQLSTATE `40001` on the underlying ADBC error
+(`error.orig.sqlstate`); recognized DML and catalog conflicts also surface as
+`sqlalchemy.exc.OperationalError`, preserving MonetDB's SQLSTATE and message.
+Roll back and retry the complete unit of work when appropriate. The dialect does not
+replay statements or invalidate a healthy connection merely because of a conflict.
+
+Autocommit reporting and pool rollback use the driver's current server state, including
+transactions started explicitly with SQL while the connection is in AUTOCOMMIT mode.
+
 
 ## Installation
 

@@ -370,6 +370,11 @@ def test_disconnect_detection_uses_adbc_io_status() -> None:
         status_code=adbc_driver_manager.AdbcStatusCode.TIMEOUT,
         details=[("adbc.monetdb.connection_terminal", b"true")],
     )
+    poisoned = adbc_driver_manager.InternalError(
+        "connection state is poisoned",
+        status_code=adbc_driver_manager.AdbcStatusCode.INTERNAL,
+        details=[("adbc.monetdb.connection_terminal", b"true")],
+    )
     server_timeout = adbc_driver_manager.OperationalError(
         "server timed out",
         status_code=adbc_driver_manager.AdbcStatusCode.TIMEOUT,
@@ -379,6 +384,7 @@ def test_disconnect_detection_uses_adbc_io_status() -> None:
     assert dialect.is_disconnect(cast(Any, disconnected), None, None)
     assert dialect.is_disconnect(cast(Any, closed), None, None)
     assert dialect.is_disconnect(cast(Any, terminal_timeout), None, None)
+    assert dialect.is_disconnect(cast(Any, poisoned), None, None)
     assert not dialect.is_disconnect(cast(Any, server_timeout), None, None)
     assert not dialect.is_disconnect(cast(Any, query_error), None, None)
 
