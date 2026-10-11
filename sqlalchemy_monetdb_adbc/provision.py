@@ -29,7 +29,7 @@ DEFAULT_SCHEMA = "sqlalchemy_test"
 
 
 @temp_table_keyword_args.for_db("monetdb")  # pyright: ignore[reportUnknownMemberType]
-def _monetdb_temp_table_keyword_args(  # pyright: ignore[reportUnusedFunction]
+def _monetdb_temp_table_keyword_args(
     cfg: Any,  # noqa: ARG001
     eng: Any,  # noqa: ARG001
 ) -> dict[str, list[str]]:
@@ -37,7 +37,7 @@ def _monetdb_temp_table_keyword_args(  # pyright: ignore[reportUnusedFunction]
 
 
 @post_configure_engine.for_db("monetdb")  # pyright: ignore[reportUnknownMemberType]
-def _monetdb_post_configure_engine(  # pyright: ignore[reportUnusedFunction]
+def _monetdb_post_configure_engine(
     url: Any,  # noqa: ARG001
     engine: Engine,
     follower_ident: Any,  # noqa: ARG001
@@ -60,7 +60,7 @@ def _monetdb_post_configure_engine(  # pyright: ignore[reportUnusedFunction]
 
 
 @drop_all_schema_objects_post_tables.for_db("monetdb")  # pyright: ignore[reportUnknownMemberType]
-def _monetdb_drop_all_schema_objects_post_tables(  # pyright: ignore[reportUnusedFunction]
+def _monetdb_drop_all_schema_objects_post_tables(
     cfg: Any,  # noqa: ARG001
     eng: Engine,
 ) -> None:
@@ -80,7 +80,7 @@ def _monetdb_drop_all_schema_objects_post_tables(  # pyright: ignore[reportUnuse
 
 
 @delete_from_all_tables.for_db("monetdb")  # pyright: ignore[reportUnknownMemberType]
-def _monetdb_delete_from_all_tables(  # pyright: ignore[reportUnusedFunction]
+def _monetdb_delete_from_all_tables(
     connection: Connection,
     cfg: Any,  # noqa: ARG001
     metadata: MetaData,

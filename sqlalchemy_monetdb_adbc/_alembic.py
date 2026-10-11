@@ -83,7 +83,7 @@ class MonetDBImpl(DefaultImpl):
 
 
 @compiles(ColumnType, "monetdb")
-def _monetdb_column_type(  # pyright: ignore[reportUnusedFunction]
+def _monetdb_column_type(
     element: ColumnType,
     compiler: DDLCompiler,
     **kw: Any,  # noqa: ARG001

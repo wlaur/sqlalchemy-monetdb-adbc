@@ -14,7 +14,7 @@ def self_referential_foreign_keys(table: Table) -> list[ForeignKeyConstraint]:
 
 
 @event.listens_for(Table, "after_create")
-def _add_self_referential_foreign_keys(  # pyright: ignore[reportUnusedFunction]
+def _add_self_referential_foreign_keys(
     target: Table,
     connection: Connection,
     **kw: Any,  # noqa: ARG001
