@@ -18,11 +18,10 @@ def is_terminal_connection_error(error: BaseException) -> bool:
 
 
 class MonetDBConnection:
-    __slots__ = ("_autocommit", "_closed", "_defunct", "raw_connection")
+    __slots__ = ("_closed", "_defunct", "raw_connection")
 
     def __init__(self, connection: ADBCConnection) -> None:
         self.raw_connection = connection
-        self._autocommit = connection.adbc_connection.get_option("adbc.connection.autocommit") == "true"
         self._closed = False
         self._defunct = False
 
@@ -30,7 +29,7 @@ class MonetDBConnection:
         return self.raw_connection.cursor()
 
     def commit(self) -> None:
-        if not self._autocommit:
+        if not self.autocommit:
             try:
                 self.raw_connection.commit()
             except adbc_driver_manager.ProgrammingError as error:
@@ -50,11 +49,12 @@ class MonetDBConnection:
                 raise
 
     def rollback(self) -> None:
-        if self._autocommit or self._closed or self._defunct:
+        if self._closed or self._defunct:
             return
         try:
-            self.raw_connection.rollback()
-        except adbc_driver_manager.ProgrammingError as error:
+            if not self.autocommit:
+                self.raw_connection.rollback()
+        except adbc_driver_manager.Error as error:
             if not is_terminal_connection_error(error):
                 raise
             self._defunct = True
@@ -74,17 +74,16 @@ class MonetDBConnection:
 
     @property
     def autocommit(self) -> bool:
-        return self._autocommit
+        return self.raw_connection.adbc_connection.get_option("adbc.connection.autocommit") == "true"
 
     @property
     def closed(self) -> bool:
         return self._closed or self._defunct
 
     def set_autocommit(self, value: bool) -> None:
-        if self._autocommit == value:
+        if self.autocommit == value:
             return
         self.raw_connection.adbc_connection.set_autocommit(value)
-        self._autocommit = value
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.raw_connection, name)
