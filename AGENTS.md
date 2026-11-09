@@ -45,3 +45,5 @@ here.
   repository before release.
 - Keep the public repository self-contained. Do not commit private planning notes,
   benchmark results, credentials, or local infrastructure details.
+
+- Pre-commit runs Ruff and Pyrefly. Commit with hooks enabled; never bypass them.

@@ -7,7 +7,7 @@ by raising. Two such cases are regression tests for bugs caught in review:
 ``datetime.date`` to ``datetime.datetime``.
 """
 
-import datetime
+import datetime as dt
 import decimal
 from typing import Any
 
@@ -16,8 +16,8 @@ import pytest
 
 from sqlalchemy_monetdb_adbc._convert import batch_to_rows, column_to_pylist
 
-NAIVE = datetime.datetime(2024, 3, 15, 12, 30, 45, 123456)
-AWARE = NAIVE.replace(tzinfo=datetime.UTC)
+NAIVE = dt.datetime(2024, 3, 15, 12, 30, 45, 123456)
+AWARE = NAIVE.replace(tzinfo=dt.UTC)
 ROWS = 64
 
 
@@ -41,12 +41,12 @@ CASES: list[tuple[str, Any]] = [
     ("timestamp[us] null", pa.array([NAIVE, None] * (ROWS // 2), pa.timestamp("us"))),
     ("timestamp[us] UTC null", pa.array([AWARE, None] * (ROWS // 2), pa.timestamp("us", tz="UTC"))),
     # Other temporal.
-    ("date32", _repeat(datetime.date(2024, 3, 15), pa.date32())),
-    ("date64", _repeat(datetime.date(2024, 3, 15), pa.date64())),
-    ("time32[s]", _repeat(datetime.time(12, 30, 45), pa.time32("s"))),
-    ("time64[us]", _repeat(datetime.time(12, 30, 45, 123456), pa.time64("us"))),
-    ("time64[ns]", _repeat(datetime.time(12, 30, 45, 123456), pa.time64("ns"))),
-    ("duration[us]", _repeat(datetime.timedelta(seconds=90), pa.duration("us"))),
+    ("date32", _repeat(dt.date(2024, 3, 15), pa.date32())),
+    ("date64", _repeat(dt.date(2024, 3, 15), pa.date64())),
+    ("time32[s]", _repeat(dt.time(12, 30, 45), pa.time32("s"))),
+    ("time64[us]", _repeat(dt.time(12, 30, 45, 123456), pa.time64("us"))),
+    ("time64[ns]", _repeat(dt.time(12, 30, 45, 123456), pa.time64("ns"))),
+    ("duration[us]", _repeat(dt.timedelta(seconds=90), pa.duration("us"))),
     # Numerics, including the signed/unsigned and width edges.
     ("int8", _repeat(-128, pa.int8())),
     ("int16", _repeat(-32768, pa.int16())),

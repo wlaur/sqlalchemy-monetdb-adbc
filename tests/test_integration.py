@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 import decimal
 import uuid
 import warnings
@@ -355,14 +355,14 @@ def test_ingest_arrow_appends_by_name_at_every_stream_size(engine: Engine, rows:
                         {
                             "c": pa.array(["x"] * rows),
                             "a": pa.array([1.5] * rows, type=pa.float64()),
-                            "ts": pa.array([datetime.datetime(2026, 7, 31)] * rows, type=pa.timestamp("us")),
+                            "ts": pa.array([dt.datetime(2026, 7, 31)] * rows, type=pa.timestamp("us")),
                         }
                     ),
                 )
                 == rows
             )
         with engine.connect() as connection:
-            assert connection.execute(select(table).distinct()).all() == [(datetime.datetime(2026, 7, 31), 1.5, 7, "x")]
+            assert connection.execute(select(table).distinct()).all() == [(dt.datetime(2026, 7, 31), 1.5, 7, "x")]
     finally:
         table.drop(engine)
 
@@ -753,9 +753,9 @@ def test_rejects_unsupported_isolation_level(engine: Engine) -> None:
         (Boolean, True),
         (Numeric(18, 4), decimal.Decimal("1.2345")),
         (Float, 1.5),
-        (Date, datetime.date(2024, 1, 2)),
-        (DateTime, datetime.datetime(2024, 1, 2, 3, 4, 5)),
-        (Time, datetime.time(3, 4, 5)),
+        (Date, dt.date(2024, 1, 2)),
+        (DateTime, dt.datetime(2024, 1, 2, 3, 4, 5)),
+        (Time, dt.time(3, 4, 5)),
         (LargeBinary, b"\x00\x01"),
         (Uuid, uuid.UUID("12345678-1234-5678-1234-567812345678")),
     ],
@@ -783,11 +783,11 @@ def test_temporal_timezone_round_trip_normalizes_aware_values_to_utc(engine: Eng
         Column("timestamp_naive", TIMESTAMP()),
     )
     metadata.create_all(engine)
-    offset = datetime.timezone(datetime.timedelta(hours=2))
-    aware_time = datetime.time(0, 30, 1, 234567, tzinfo=offset)
-    naive_time = datetime.time(0, 30, 1, 234567)
-    aware_datetime = datetime.datetime(2024, 1, 2, 0, 30, 1, 234567, tzinfo=offset)
-    naive_datetime = datetime.datetime(2024, 1, 2, 0, 30, 1, 234567)
+    offset = dt.timezone(dt.timedelta(hours=2))
+    aware_time = dt.time(0, 30, 1, 234567, tzinfo=offset)
+    naive_time = dt.time(0, 30, 1, 234567)
+    aware_datetime = dt.datetime(2024, 1, 2, 0, 30, 1, 234567, tzinfo=offset)
+    naive_datetime = dt.datetime(2024, 1, 2, 0, 30, 1, 234567)
 
     with engine.begin() as connection:
         connection.execute(
@@ -803,11 +803,11 @@ def test_temporal_timezone_round_trip_normalizes_aware_values_to_utc(engine: Eng
         )
         row = connection.execute(select(table)).one()
 
-    assert row.time_tz == datetime.time(22, 30, 1, 234567, tzinfo=datetime.UTC)
+    assert row.time_tz == dt.time(22, 30, 1, 234567, tzinfo=dt.UTC)
     assert row.time_naive == naive_time
-    assert row.datetime_tz == aware_datetime.astimezone(datetime.UTC)
+    assert row.datetime_tz == aware_datetime.astimezone(dt.UTC)
     assert row.datetime_naive == naive_datetime
-    assert row.timestamp_tz == aware_datetime.astimezone(datetime.UTC)
+    assert row.timestamp_tz == aware_datetime.astimezone(dt.UTC)
     assert row.timestamp_naive == naive_datetime
 
 
@@ -1138,7 +1138,7 @@ def test_generic_interval_round_trip_and_predicate(engine: Engine) -> None:
     metadata = MetaData()
     table = Table("generic_interval", metadata, Column("id", Integer), Column("window", Interval, nullable=False))
     metadata.create_all(engine)
-    window = datetime.timedelta(hours=1)
+    window = dt.timedelta(hours=1)
 
     with engine.begin() as connection:
         connection.execute(insert(table), [{"id": 1, "window": window}])
@@ -1171,7 +1171,7 @@ def test_arrow_helpers_apply_sqlalchemy_bind_processors(engine: Engine) -> None:
     )
     metadata.create_all(engine)
     content = _Content(title="Arrow", tags=["typed"], views=3)
-    at = datetime.time(1, 2, 3, tzinfo=datetime.timezone(datetime.timedelta(hours=2)))
+    at = dt.time(1, 2, 3, tzinfo=dt.timezone(dt.timedelta(hours=2)))
 
     with engine.begin() as connection:
         connection.execute(insert(table), [{"id": 1, "doc": {"value": 1}, "model": content, "at": at}])

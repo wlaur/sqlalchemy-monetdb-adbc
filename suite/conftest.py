@@ -26,7 +26,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     the driver ever gains the behaviour, which is the signal to delete the entry.
     """
     for item in items:
-        class_name = _CLASS_SUFFIX.sub("", item.cls.__name__) if item.cls else ""
+        class_name = _CLASS_SUFFIX.sub("", item.cls.__name__) if isinstance(item, pytest.Function) and item.cls else ""
         qualified = f"{class_name}::{item.name}"
         # Match the exact parametrisation first, then the whole test.
         reason = KNOWN_FAILURES.get(qualified) or KNOWN_FAILURES.get(qualified.split("[")[0])

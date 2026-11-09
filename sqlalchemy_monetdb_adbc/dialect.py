@@ -115,7 +115,7 @@ class MonetDBADBCDialect(  # pyright: ignore[reportIncompatibleMethodOverride]
         "url": MONETDB_URL,
     }
 
-    colspecs: ClassVar[dict[type[sqltypes.TypeEngine[Any]], type[sqltypes.TypeEngine[Any]]]] = {  # pyright: ignore[reportIncompatibleVariableOverride]
+    colspecs: ClassVar[dict[type[sqltypes.TypeEngine[Any]], type[sqltypes.TypeEngine[Any]]]] = {  # pyright: ignore[reportIncompatibleVariableOverride]  # pyrefly: ignore[bad-override]
         sqltypes.Float: MonetDBFloat,
         sqltypes.Numeric: MonetDBNumeric,
         sqltypes.JSON: MonetDBJSON,
