@@ -420,7 +420,7 @@ RESERVED_WORDS = frozenset(
 
 
 class MonetDBIdentifierPreparer(compiler.IdentifierPreparer):
-    reserved_words = RESERVED_WORDS
+    reserved_words = RESERVED_WORDS  # pyrefly: ignore[bad-override-mutable-attribute]
     illegal_initial_characters = {str(digit) for digit in range(10)} | {"_", "$"}
 
 

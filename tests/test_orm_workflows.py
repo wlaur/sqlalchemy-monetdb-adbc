@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import datetime
+import datetime as dt
 import decimal
 import os
 import subprocess
@@ -47,11 +47,11 @@ def _tags(label: str = "primary") -> SensorTags:
     return SensorTags(
         labels=[label],
         details=TagDetails(owner="ops", calibrated=True),
-        observed_at=datetime.datetime(2026, 7, 28, 10, 0, 0, 123456),
+        observed_at=dt.datetime(2026, 7, 28, 10, 0, 0, 123456),
     )
 
 
-def _reading_table(rows: list[tuple[int, datetime.datetime]]) -> pa.Table:
+def _reading_table(rows: list[tuple[int, dt.datetime]]) -> pa.Table:
     month_field = pa.field(
         "age",
         pa.int32(),
@@ -76,7 +76,7 @@ def _reading_table(rows: list[tuple[int, datetime.datetime]]) -> pa.Table:
             pa.array([1.25] * len(rows), type=pa.float64()),
             pa.array([b"\x00raw"] * len(rows), type=pa.large_binary()),
             pa.array([7] * len(rows), type=pa.int8()),
-            pa.array([datetime.timedelta(milliseconds=1250)] * len(rows), type=pa.duration("ms")),
+            pa.array([dt.timedelta(milliseconds=1250)] * len(rows), type=pa.duration("ms")),
             pa.array([14] * len(rows), type=pa.int32()),
             pa.array(["bulk"] * len(rows), type=pa.large_string()),
         ],
@@ -118,7 +118,7 @@ def test_orm_ddl_and_reflection_round_trip(engine: Engine) -> None:
 
 
 def test_orm_type_matrix_matches_arrow_fetch(engine: Engine) -> None:
-    timestamp = datetime.datetime(2026, 7, 28, 12, 34, 56, 123456)
+    timestamp = dt.datetime(2026, 7, 28, 12, 34, 56, 123456)
     values: dict[str, Any] = {
         "small_value": -(2**15) + 1,
         "int_value": 2**31 - 1,
@@ -130,13 +130,13 @@ def test_orm_type_matrix_matches_arrow_fetch(engine: Engine) -> None:
         "string_value": "",
         "text_value": "text \U0001f680",
         "bool_value": True,
-        "date_value": datetime.date(2026, 7, 28),
-        "time_value": datetime.time(23, 59, 59, 123456),
+        "date_value": dt.date(2026, 7, 28),
+        "time_value": dt.time(23, 59, 59, 123456),
         "datetime_value": timestamp,
         "binary_value": b"\x00\xffpayload",
         "uuid_value": uuid.UUID("12345678-1234-5678-1234-567812345678"),
         "json_value": {"nested": {"items": [1, "two", None]}},
-        "second_interval_value": datetime.timedelta(days=1, microseconds=123000),
+        "second_interval_value": dt.timedelta(days=1, microseconds=123000),
         "month_interval_value": 14,
         "inet_value": "127.0.0.1",
         "url_value": "https://example.com/\U0001f680",
@@ -193,12 +193,12 @@ def test_orm_crud_workflows_cross_parameter_batches(engine: Engine) -> None:
         session.add_all(sensors)
         session.commit()
 
-    ts = datetime.datetime(2026, 7, 28, 12, 0)
+    ts = dt.datetime(2026, 7, 28, 12, 0)
     with Session(engine) as session:
         sensor = session.get_one(Sensor, 10_000)
         sensor.readings = [
             Reading(ts=ts, value=1.5, quality=10, note="first"),
-            Reading(ts=ts + datetime.timedelta(minutes=1), value=2.5, quality=20, note="second"),
+            Reading(ts=ts + dt.timedelta(minutes=1), value=2.5, quality=20, note="second"),
         ]
         session.commit()
 
@@ -229,7 +229,7 @@ def test_orm_crud_workflows_cross_parameter_batches(engine: Engine) -> None:
 
 
 def test_orm_constraint_errors_recover_after_rollback(engine: Engine) -> None:
-    ts = datetime.datetime(2026, 7, 28, 12, 0)
+    ts = dt.datetime(2026, 7, 28, 12, 0)
     with Session(engine) as session:
         session.add_all(
             [
@@ -274,7 +274,7 @@ def test_orm_transactions_savepoints_and_ingest_poison(engine: Engine) -> None:
         assert session.get(Sensor, 3) is not None
         assert session.get(Sensor, 4) is None
 
-    duplicate_ts = datetime.datetime(2026, 7, 28, 12, 0)
+    duplicate_ts = dt.datetime(2026, 7, 28, 12, 0)
     with Session(engine) as session:
         session.add(Sensor(id=5, name="prior-write", active=True))
         session.flush()
@@ -309,7 +309,7 @@ def test_arrow_ingest_and_identity_interoperate_with_orm(engine: Engine) -> None
         session.commit()
         first_id = first.id
 
-        ts = datetime.datetime(2026, 7, 28, 12, 0, 0, 123456)
+        ts = dt.datetime(2026, 7, 28, 12, 0, 0, 123456)
         assert (
             ingest_arrow(
                 session.connection(),
@@ -321,7 +321,7 @@ def test_arrow_ingest_and_identity_interoperate_with_orm(engine: Engine) -> None
         session.commit()
         reading = session.get_one(Reading, (first_id, ts))
         assert reading.raw == b"\x00raw"
-        assert reading.delta == datetime.timedelta(milliseconds=1250)
+        assert reading.delta == dt.timedelta(milliseconds=1250)
 
         identity_schema = pa.schema(
             [

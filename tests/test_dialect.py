@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 from types import ModuleType
 from typing import Any, cast
 
@@ -272,7 +272,7 @@ def test_arrow_sql_applies_bind_processors_to_scalar_and_expanding_values() -> N
     )
     statement = select(table).where(
         table.c.doc.in_([{"value": 1}, {"value": 2}]),
-        table.c.at == datetime.time(1, 2, 3, tzinfo=datetime.timezone(datetime.timedelta(hours=2))),
+        table.c.at == dt.time(1, 2, 3, tzinfo=dt.timezone(dt.timedelta(hours=2))),
         table.c.custom == "value",
     )
 
@@ -282,7 +282,7 @@ def test_arrow_sql_applies_bind_processors_to_scalar_and_expanding_values() -> N
     )
 
     assert "doc IN (?, ?)" in sql
-    assert parameters == ["json:1", "json:2", datetime.time(23, 2, 3), "processed:value"]
+    assert parameters == ["json:1", "json:2", dt.time(23, 2, 3), "processed:value"]
 
 
 def test_arrow_sql_handles_escaped_scalar_and_expanding_bind_names() -> None:
@@ -655,7 +655,7 @@ def test_timezone_time_processors_normalize_to_utc() -> None:
     assert bind is not None
     assert result is not None
 
-    bound = bind(datetime.time(0, 30, 1, 234567, tzinfo=datetime.timezone(datetime.timedelta(hours=2))))
+    bound = bind(dt.time(0, 30, 1, 234567, tzinfo=dt.timezone(dt.timedelta(hours=2))))
 
-    assert bound == datetime.time(22, 30, 1, 234567)
-    assert result(bound) == datetime.time(22, 30, 1, 234567, tzinfo=datetime.UTC)
+    assert bound == dt.time(22, 30, 1, 234567)
+    assert result(bound) == dt.time(22, 30, 1, 234567, tzinfo=dt.UTC)

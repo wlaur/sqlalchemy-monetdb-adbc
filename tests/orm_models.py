@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import datetime
+import datetime as dt
 import decimal
 import uuid
 from typing import Any
@@ -49,7 +49,7 @@ class TagDetails(BaseModel):
 class SensorTags(BaseModel):
     labels: list[str]
     details: TagDetails
-    observed_at: datetime.datetime
+    observed_at: dt.datetime
     note: str | None = None
 
 
@@ -72,7 +72,7 @@ class Sensor(ORMBase):
     tags: Mapped[SensorTags | None] = mapped_column(PydanticJSON(SensorTags))
     url: Mapped[str | None] = mapped_column(URL)
     addr: Mapped[str | None] = mapped_column(INET)
-    created: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+    created: Mapped[dt.datetime] = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
     active: Mapped[bool] = mapped_column(Boolean, nullable=False)
     readings: Mapped[list[Reading]] = relationship(back_populates="sensor", passive_deletes=True)
 
@@ -88,11 +88,11 @@ class Reading(ORMBase):
         ForeignKey("orm_sensor.id", ondelete="CASCADE"),
         primary_key=True,
     )
-    ts: Mapped[datetime.datetime] = mapped_column(DateTime, primary_key=True)
+    ts: Mapped[dt.datetime] = mapped_column(DateTime, primary_key=True)
     value: Mapped[float | None] = mapped_column(DOUBLE_PRECISION)
     raw: Mapped[bytes | None] = mapped_column(LargeBinary)
     quality: Mapped[int | None] = mapped_column(TINYINT)
-    delta: Mapped[datetime.timedelta | None] = mapped_column(SECOND_INTERVAL)
+    delta: Mapped[dt.timedelta | None] = mapped_column(SECOND_INTERVAL)
     age: Mapped[int | None] = mapped_column(MONTH_INTERVAL)
     note: Mapped[str | None] = mapped_column(Text)
     sensor: Mapped[Sensor] = relationship(back_populates="readings")
@@ -112,13 +112,13 @@ class TypeMatrix(ORMBase):
     string_value: Mapped[str | None] = mapped_column(String(32))
     text_value: Mapped[str | None] = mapped_column(Text)
     bool_value: Mapped[bool | None] = mapped_column(Boolean)
-    date_value: Mapped[datetime.date | None] = mapped_column(Date)
-    time_value: Mapped[datetime.time | None] = mapped_column(Time)
-    datetime_value: Mapped[datetime.datetime | None] = mapped_column(DateTime)
+    date_value: Mapped[dt.date | None] = mapped_column(Date)
+    time_value: Mapped[dt.time | None] = mapped_column(Time)
+    datetime_value: Mapped[dt.datetime | None] = mapped_column(DateTime)
     binary_value: Mapped[bytes | None] = mapped_column(LargeBinary)
     uuid_value: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     json_value: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    second_interval_value: Mapped[datetime.timedelta | None] = mapped_column(SECOND_INTERVAL)
+    second_interval_value: Mapped[dt.timedelta | None] = mapped_column(SECOND_INTERVAL)
     month_interval_value: Mapped[int | None] = mapped_column(MONTH_INTERVAL)
     inet_value: Mapped[str | None] = mapped_column(INET)
     url_value: Mapped[str | None] = mapped_column(URL)

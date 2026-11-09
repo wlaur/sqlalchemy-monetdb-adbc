@@ -37,8 +37,10 @@ dependencies = [
 dev = [
     "alembic>=1.14",
     "polars>=2.0",
+    "pre-commit>=4.7.0",
     "pyarrow-stubs>=20.0.0.20260625",
     "pymonetdb>=1.9",
+    "pyrefly==1.4.0",
     "pyright",
     "pytest>=9",
     "ruff",
@@ -136,3 +138,12 @@ reportMissingTypeStubs = false
 reportUnknownMemberType = false
 reportUnknownVariableType = false
 reportUnknownArgumentType = false
+
+[tool.pyrefly]
+project-includes = ["**/*.py", "**/*.pyi"]
+search-path = [".", "tests", "suite"]
+infer-with-first-use = false
+enabled-ignores = ["pyrefly"]
+
+[tool.pyrefly.errors]
+unused-ignore = "error"

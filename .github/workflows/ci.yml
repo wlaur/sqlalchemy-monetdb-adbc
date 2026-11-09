@@ -35,7 +35,7 @@ jobs:
 
   platform:
     name: Platform (${{ matrix.os }}, Python ${{ matrix.python-version }})
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'macos-14' && 'macos-15' || matrix.os }}
     strategy:
       fail-fast: false
       matrix:

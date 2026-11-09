@@ -30,7 +30,7 @@ setting up NumPy, so point-query batches take that path directly.
 # third-party stubs, so this conversion boundary keeps those values dynamic.
 # pyright: reportUnknownMemberType=false, reportUnknownArgumentType=false
 
-import datetime
+import datetime as dt
 from typing import Any, Final, cast
 
 import pyarrow as pa
@@ -68,13 +68,13 @@ def _numpy_safe(data_type: Any) -> bool:
     )
 
 
-def _timestamp_to_pylist(column: Any) -> list[datetime.datetime]:
-    values = cast(list[datetime.datetime], column.to_numpy(zero_copy_only=False).tolist())
-    timezone = cast(datetime.tzinfo, cast(Any, pa).lib.string_to_tzinfo(column.type.tz))
-    if timezone.utcoffset(None) == datetime.timedelta(0):
+def _timestamp_to_pylist(column: Any) -> list[dt.datetime]:
+    values = cast(list[dt.datetime], column.to_numpy(zero_copy_only=False).tolist())
+    timezone = cast(dt.tzinfo, cast(Any, pa).lib.string_to_tzinfo(column.type.tz))
+    if timezone.utcoffset(None) == dt.timedelta(0):
         return [value.replace(tzinfo=timezone) for value in values]
 
-    return [value.replace(tzinfo=datetime.UTC).astimezone(timezone) for value in values]
+    return [value.replace(tzinfo=dt.UTC).astimezone(timezone) for value in values]
 
 
 def column_to_pylist(column: Any) -> list[Any]:
